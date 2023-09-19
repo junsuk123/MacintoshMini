@@ -74,7 +74,7 @@ void setup()
 #endif
 
 
-  if (!SD.begin(SS, SPI, 8000000)) // SPI bus mode-> SD 카드 동작 및 가능 여부 확인
+  if (!SD.begin(SS, SPI, 80000000)) // SPI bus mode-> SD 카드 동작 및 가능 여부 확인
   {
     Serial.println(F("ERROR: SD card mount failed!"));
     gfx->println(F("ERROR: SD card mount failed!"));
@@ -86,11 +86,11 @@ void setup()
     xTaskCreatePinnedToCore(
     displaying,         // 태스크 함수
     "Task1",           // 테스크 이름
-    115200,             // 스택 크기(워드단위)
+    57600,             // 스택 크기(워드단위)
     NULL,              // 태스크 파라미터
     1,                 // 태스크 우선순위
     &Task1,            // 태스크 핸들
-    1);  
+    0);  
   }
 
 #ifdef TFT_BL

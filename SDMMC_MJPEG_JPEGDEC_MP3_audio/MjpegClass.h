@@ -2,7 +2,7 @@
 #define _MJPEGCLASS_H_
 
 #define READ_BUFFER_SIZE 1024
-#define MAXOUTPUTSIZE 16
+#define MAXOUTPUTSIZE 32
 #define NUMBER_OF_DRAW_BUFFER 8
 
 #include <freertos/FreeRTOS.h>
@@ -46,10 +46,28 @@ static int queueDrawMCU(JPEGDRAW *pDraw)
 static void drawTask(void *arg)
 {
   paramDrawTask *p = (paramDrawTask *)arg;
+  uint16_t *drawBuffer = NULL;
+
   for (int i = 0; i < NUMBER_OF_DRAW_BUFFER; i++)
   {
-    jpegdraws[i].pPixels = (uint16_t *)heap_caps_malloc(MAXOUTPUTSIZE * 16 * 16 * 2, MALLOC_CAP_DMA);
-    //Serial.printf("#%d draw buffer allocated\n", i);
+    // 더 이상 사용하지 않는 버퍼는 해제
+    if (drawBuffer != NULL)
+    {
+      free(drawBuffer);
+      drawBuffer = NULL;
+    }
+
+    // 새로운 drawBuffer 할당
+    drawBuffer = (uint16_t *)heap_caps_malloc(MAXOUTPUTSIZE * 16 * 16 * 2, MALLOC_CAP_DMA);
+    if (drawBuffer == NULL)
+    {
+      // 메모리 할당 실패 처리
+      Serial.println(F("Failed to allocate memory for drawBuffer"));
+      vTaskDelete(NULL);
+    }
+
+    // 버퍼 할당이 완료되었으므로 할당된 drawBuffer를 사용
+    jpegdraws[i].pPixels = drawBuffer;
   }
   JPEGDRAW *pDraw;
   //Serial.println("drawTask start");
@@ -60,8 +78,13 @@ static void drawTask(void *arg)
     // Serial.println("task work done");
     ++draw_cnt;
   }
+  if (drawBuffer != NULL)
+  {
+    free(drawBuffer);
+    drawBuffer = NULL;
+  }
+
   vQueueDelete(xqh);
-  //Serial.println("drawTask end");
   vTaskDelete(NULL);
 }
 
@@ -95,7 +118,7 @@ public:
         TaskHandle_t task;
         _p.drawFunc = pfnDraw;
         xqh = xQueueCreate(NUMBER_OF_DRAW_BUFFER, sizeof(JPEGDRAW));
-        xTaskCreatePinnedToCore(drawTask, "drawTask", 40000, &_p, 1, &task, 0);
+        xTaskCreatePinnedToCore(drawTask, "drawTask", 80000, &_p, 1, &task, 0);
       }
     }
 

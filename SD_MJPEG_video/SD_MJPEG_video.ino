@@ -1,38 +1,18 @@
-#define MJPEG_FILENAME "/220_30fps.mjpeg"
-#define MJPEG_BUFFER_SIZE (220 * 176 * 2 / 4)
+#define MJPEG_FILENAME "/video.mjpeg"
+#define MJPEG_BUFFER_SIZE (220 * 240 * 2 / 4)
 #include <WiFi.h>
 #include <SD.h>
 #include <SD_MMC.h>
 
 #include <Arduino_GFX_Library.h>
 #define TFT_BRIGHTNESS 128
-#if defined(ARDUINO_M5Stack_Core_ESP32) || defined(ARDUINO_M5STACK_FIRE)
-#define TFT_BL 32
+#define SCK 7
+#define MOSI 9
+#define MISO 8
 #define SS 4
-Arduino_HWSPI *bus = new Arduino_HWSPI(27 /* DC */, 14 /* CS */, SCK, MOSI, MISO);
-Arduino_GFX *gfx = new Arduino_ILI9341_M5STACK(bus, 33 /* RST */, 1 /* rotation */);
-#elif defined(ARDUINO_ODROID_ESP32)
-#define TFT_BL 14
-Arduino_HWSPI *bus = new Arduino_HWSPI(21 /* DC */, 5 /* CS */, SCK, MOSI, MISO);
-// Arduino_GFX *gfx = new Arduino_ILI9341(bus, -1 /* RST */, 3 /* rotation */);
-Arduino_GFX *gfx = new Arduino_ST7789(bus, -1 /* RST */, 1 /* rotation */, true /* IPS */);
-#elif defined(ARDUINO_T) // TTGO T-Watch
-#define TFT_BL 12
-Arduino_HWSPI *bus = new Arduino_HWSPI(27 /* DC */, 5 /* CS */, SCK, MOSI, MISO);
-Arduino_GFX *gfx = new Arduino_ST7789(bus, -1 /* RST */, 2 /* rotation */, true /* IPS */, 240, 240, 0, 80);
-#else /* not a specific hardware */
-#define SCK 18
-#define MOSI 23
-#define MISO 19
-#define SS 0
-#define TFT_BL 22
-// ST7789 Display
-// Arduino_HWSPI *bus = new Arduino_HWSPI(15 /* DC */, 12 /* CS */, SCK, MOSI, MISO);
-// Arduino_GFX *gfx = new Arduino_ST7789(bus, -1 /* RST */, 2 /* rotation */, true /* IPS */, 240 /* width */, 240 /* height */, 0 /* col offset 1 */, 80 /* row offset 1 */);
-// ILI9225 Display
-Arduino_HWSPI *bus = new Arduino_HWSPI(27 /* DC */, 5 /* CS */, SCK, MOSI, MISO);
-Arduino_GFX *gfx = new Arduino_ILI9225(bus, 33 /* RST */, 3 /* rotation */);
-#endif /* not a specific hardware */
+#define TFT_BL 3// ST7789 Display
+Arduino_HWSPI *bus = new Arduino_HWSPI(2,-1, SCK, MOSI, MISO);//DC/CS/SCK/MOSI/MISO->SPI 통신 핀 세팅
+Arduino_ST7789 *gfx = new Arduino_ST7789(bus, 1, 4 , true , 240 , 240, 0 , 0 );//RES/rotation/IPS/WIDTH/HEIGHT/COLOFFSET/ROWOFFSET-> 디스플레이 세팅
 
 #include "MjpegClass.h"
 static MjpegClass mjpeg;
@@ -47,8 +27,8 @@ void setup()
   gfx->fillScreen(BLACK);
 
 #ifdef TFT_BL
-  ledcAttachPin(TFT_BL, 1);     // assign TFT_BL pin to channel 1
   ledcSetup(1, 12000, 8);       // 12 kHz PWM, 8-bit resolution
+  ledcAttachPin(TFT_BL, 1);     // assign TFT_BL pin to channel 1
   ledcWrite(1, TFT_BRIGHTNESS); // brightness 0 - 255
 #endif
 
