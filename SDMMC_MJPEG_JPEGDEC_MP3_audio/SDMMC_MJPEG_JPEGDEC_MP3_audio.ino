@@ -1,28 +1,43 @@
+//SDMMC_MJPEG_JPEGDEC_MP3_audio.ino
 
+// MP3 오디오 파일과 MJPEG 비디오 파일을 재생하고 화면에 표시하는 Arduino 코드입니다.
 
+// MP3 파일의 경로 및 이름 설정
 #define MP3_FILENAME "/video.mp3"
+// 초당 이미지 프레임 설정
 #define FPS 30
+// MJPEG 이미지 파일의 경로 및 이름 설정
 #define MJPEG_FILENAME "/video.mjpeg"
-#define MJPEG_BUFFER_SIZE (240 * 240 * 2/4)
+// MJPEG 버퍼 크기 설정 (픽셀)
+#define MJPEG_BUFFER_SIZE (240 * 240 * 2 / 4)
 
+// 필요한 라이브러리 포함
+#include <WiFi.h>          // 인터넷 연결 서비스를 위한 라이브러리 (현재 미사용)
+#include <SD_MMC.h>        // SD 카드 관련 라이브러리
+#include <SD.h>            // SD 카드 관련 라이브러리
+#include <Arduino_GFX_Library.h> // 디스플레이 그래픽 관련 라이브러리
 
-#include <WiFi.h>
-#include <SD_MMC.h>
-#include <SD.h>
-/* Arduino_GFX */
-#include <Arduino_GFX_Library.h>
-#define TFT_BRIGHTNESS 128
+// SPI 통신을 위한 핀 설정
 #define SCK 7
 #define MOSI 9
 #define MISO 8
-#define SS 4
-#define TFT_BL 3
 
-// ST7789 Display
-Arduino_HWSPI *bus = new Arduino_HWSPI(2,-1, SCK, MOSI, MISO);//DC/CS/SCK/MOSI/MISO->SPI 통신 핀 세팅
-Arduino_ST7789 *gfx = new Arduino_ST7789(bus, 1, 4 , true , 240 , 240, 0 , 0 );//RES/rotation/IPS/WIDTH/HEIGHT/COLOFFSET/ROWOFFSET-> 디스플레이 세팅
+#define SS 4 // SD 카드 CS 핀
 
-/* MP3 Audio */
+#define TFT_BRIGHTNESS 128 // 디스플레이 밝기 설정
+#define TFT_BL 3           // 디스플레이 백라이트 핀
+#define TFT_DC 2           // 디스플레이 DC 핀
+#define TFT_CS -1          // 디스플레이 CS 핀 (사용하지 않음)
+#define TFT_RES 1          // 디스플레이 Reset 핀
+#define TFT_ROT 4          // 화면 회전
+#define TFT_WIDTH 240      // 디스플레이 가로 픽셀
+#define TFT_HEIGHT 240     // 디스플레이 세로 픽셀
+
+// ST7789 디스플레이 설정
+Arduino_HWSPI *bus = new Arduino_HWSPI(TFT_DC, TFT_CS, SCK, MOSI, MISO); // DC/CS/SCK/MOSI/MISO -> SPI 통신 핀 설정
+Arduino_ST7789 *gfx = new Arduino_ST7789(bus, TFT_RES, TFT_ROT, true, TFT_WIDTH, TFT_HEIGHT, 0, 0); // 디스플레이 설정
+
+/* MP3 오디오 */
 #include <AudioFileSourceFS.h>
 #include <AudioFileSourceID3.h>
 #include <AudioGeneratorMP3.h>
@@ -30,23 +45,20 @@ Arduino_ST7789 *gfx = new Arduino_ST7789(bus, 1, 4 , true , 240 , 240, 0 , 0 );/
 static AudioGeneratorMP3 *mp3;
 static AudioOutputI2S *out;
 
-/* MJPEG Video */
+/* MJPEG 비디오 */
 #include "MjpegClass.h"
 static MjpegClass mjpeg;
 uint8_t *mjpeg_buf;
 
-/* variables */
+/* 변수들 */
 static unsigned long total_play_audio, total_read_video, total_decode_video, total_show_video;
 static unsigned long start_ms, curr_ms, next_frame_ms;
 static int skipped_frames, next_frame, time_used, total_frames;
 TaskHandle_t Task1;
 
-
-
-// pixel drawing callback
+// 픽셀 그리기 콜백
 static int drawMCU(JPEGDRAW *pDraw)
 {
-  // Serial.printf("Draw pos = %d,%d. size = %d x %d\n", pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
   unsigned long s = millis();
   gfx->draw16bitBeRGBBitmap(pDraw->x, pDraw->y, pDraw->pPixels, pDraw->iWidth, pDraw->iHeight);
   total_show_video += millis() - s;
@@ -58,64 +70,61 @@ void setup()
   WiFi.mode(WIFI_OFF);
   Serial.begin(115200);
 
-  // Init Video
+  // 비디오 초기화
   gfx->begin();
-  
+
   gfx->fillScreen(YELLOW);
   delay(2000);
   gfx->fillScreen(BLACK);
   delay(1000);
-                // 실행될 코어
 
 #ifdef TFT_BL
   ledcSetup(1, 12000, 8);       // 12 kHz PWM, 8-bit resolution
-  ledcAttachPin(TFT_BL, 1);     // assign TFT_BL pin to channel 1
-  ledcWrite(1, TFT_BRIGHTNESS); // brightness 0 - 255
+  ledcAttachPin(TFT_BL, 1);     // TFT_BL 핀을 채널 1에 연결
+  ledcWrite(1, TFT_BRIGHTNESS); // 밝기 설정 (0 - 255)
 #endif
 
-
-  if (!SD.begin(SS, SPI, 80000000)) // SPI bus mode-> SD 카드 동작 및 가능 여부 확인
+  // SD 카드 초기화
+  if (!SD.begin(SS, SPI, 80000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
   {
     Serial.println(F("ERROR: SD card mount failed!"));
     gfx->println(F("ERROR: SD card mount failed!"));
     exit(1);
   }
+  Serial.println(F("SD Success!!"));
 
-  else{
-    Serial.println(F("SD Success!!"));
-    xTaskCreatePinnedToCore(
-    displaying,         // 태스크 함수
-    "Task1",           // 테스크 이름
-    57600,             // 스택 크기(워드단위)
-    NULL,              // 태스크 파라미터
-    1,                 // 태스크 우선순위
-    &Task1,            // 태스크 핸들
-    0);  
-  }
+  out = new AudioOutputI2S(0, 1, 64); // 내장 DAC로 출력 설정
+  mp3 = new AudioGeneratorMP3();
+
+  mjpeg_buf = (uint8_t *)malloc(MJPEG_BUFFER_SIZE);
+  xTaskCreatePinnedToCore(
+      displaying,     // 태스크 함수
+      "Task1",        // 태스크 이름
+      57600,          // 스택 크기 (워드 단위)
+      NULL,           // 태스크 파라미터
+      1,              // 태스크 우선순위
+      &Task1,         // 태스크 핸들
+      0);
 
 #ifdef TFT_BL
   delay(6000);
   ledcDetachPin(TFT_BL);
-
 #endif
   gfx->displayOff();
 }
-void displaying(void *param){
-  Serial.print("# Task 1 running on core ");
-  Serial.println(xPortGetCoreID());
-  
-  out = new AudioOutputI2S(0, 1, 64); // Output to builtInDAC
-  // out->SetGain(0.5);
-  mp3 = new AudioGeneratorMP3();
 
-  mjpeg_buf = (uint8_t *)malloc(MJPEG_BUFFER_SIZE);
+void displaying(void *param)
+{
+  Serial.print(F("# Task 1 running on core "));
+  Serial.println(F(xPortGetCoreID()));
+
   if (!mjpeg_buf)
   {
     Serial.println(F("mjpeg_buf malloc failed!"));
     gfx->println(F("mjpeg_buf malloc failed!"));
     exit(1);
   }
-   AudioFileSourceFS *aFile = new AudioFileSourceFS(SD, MP3_FILENAME);
+  AudioFileSourceFS *aFile = new AudioFileSourceFS(SD, MP3_FILENAME);
   File vFile = SD.open(MJPEG_FILENAME);
   if (!vFile || vFile.isDirectory())
   {
@@ -126,10 +135,10 @@ void displaying(void *param){
 
   Serial.println(F("PCM audio MJPEG video start"));
 
-  // init Video
+  // 비디오 초기화
   mjpeg.setup(&vFile, mjpeg_buf, drawMCU, true, true);
 
-  // init audio
+  // 오디오 초기화
   mp3->begin(aFile, out);
 
   skipped_frames = 0;
@@ -138,19 +147,22 @@ void displaying(void *param){
   total_decode_video = 0;
   total_show_video = 0;
   next_frame = 0;
+  total_frames = 0;
   start_ms = millis();
   curr_ms = start_ms;
   next_frame_ms = start_ms + (++next_frame * 1000 / FPS);
 
-  while (vFile.available() && mjpeg.readMjpegBuf()) // Read video
-  { Serial.println(configMINIMAL_STACK_SIZE);
+  while (vFile.available() && mjpeg.readMjpegBuf()) // 비디오 읽기
+  {
+    // 비디오 파일에 할당된 최소 스택 크기
+    Serial.println(configMINIMAL_STACK_SIZE);
 
     total_read_video += millis() - curr_ms;
     curr_ms = millis();
 
-    if (millis() < next_frame_ms) // check show frame or skip frame
+    if (millis() < next_frame_ms) // 프레임 표시 또는 스킵 확인
     {
-      // Play video
+      // 비디오 재생
       mjpeg.drawJpg();
       total_decode_video += millis() - curr_ms;
     }
@@ -161,14 +173,14 @@ void displaying(void *param){
     }
     curr_ms = millis();
 
-    // Play audio
+    // 오디오 재생
     if ((mp3->isRunning()) && (!mp3->loop()))
     {
       mp3->stop();
     }
     total_play_audio += millis() - curr_ms;
 
-    while (millis() < next_frame_ms)//->error
+    while (millis() < next_frame_ms) //다음 프레임 시간까지 대기
     {
       vTaskDelay(1);
     }
@@ -178,7 +190,7 @@ void displaying(void *param){
   }
   time_used = millis() - start_ms;
   Serial.println(F("PCM audio MJPEG video end"));
-  vFile.close();
+  vFile.close();//비디오 및 오디오 파일 닫기
   aFile->close();
 
   display_stat();
@@ -188,7 +200,6 @@ void displaying(void *param){
 
 void loop()
 {
- 
 }
 
 #define CHART_MARGIN 24
@@ -200,9 +211,10 @@ void loop()
 #define LEGEND_F_COLOR 0xFFE6
 #define LEGEND_G_COLOR 0xA2A5
 
+
+// 차트 및 통계 정보 표시 함수
 void display_stat()
 {
-  int total_frames = next_frame - 1;
   int played_frames = total_frames - skipped_frames;
   float fps = 1000.0 * played_frames / time_used;
   Serial.printf("Played frames: %d\n", played_frames);

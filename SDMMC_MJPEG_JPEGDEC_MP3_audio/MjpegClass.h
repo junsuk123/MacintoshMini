@@ -1,9 +1,10 @@
+//MjpegClass.h
 #ifndef _MJPEGCLASS_H_
 #define _MJPEGCLASS_H_
 
 #define READ_BUFFER_SIZE 1024
-#define MAXOUTPUTSIZE 32
-#define NUMBER_OF_DRAW_BUFFER 8
+#define MAXOUTPUTSIZE 16
+#define NUMBER_OF_DRAW_BUFFER 4
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -118,14 +119,14 @@ public:
         TaskHandle_t task;
         _p.drawFunc = pfnDraw;
         xqh = xQueueCreate(NUMBER_OF_DRAW_BUFFER, sizeof(JPEGDRAW));
-        xTaskCreatePinnedToCore(drawTask, "drawTask", 80000, &_p, 1, &task, 0);
+        xTaskCreatePinnedToCore(drawTask, "drawTask", 16000, &_p, 1, &task, 1);
       }
     }
 
     return true;
   }
 
-  bool readMjpegBuf()
+  bool readMjpegBuf()// Mjpeg 버퍼를 읽음
   {
     if (_inputindex == 0)
     {
@@ -135,12 +136,12 @@ public:
     _mjpeg_buf_offset = 0;
     int i = 0;
     bool found_FFD8 = false;
-    while ((_buf_read > 0) && (!found_FFD8))
+    while ((_buf_read > 0) && (!found_FFD8))//프레임 헤더를 찾는 반복문
     {
       i = 0;
       while ((i < _buf_read) && (!found_FFD8))
       {
-        if ((_read_buf[i] == 0xFF) && (_read_buf[i + 1] == 0xD8)) // JPEG header
+        if ((_read_buf[i] == 0xFF) && (_read_buf[i + 1] == 0xD8)) // JPEG header-->FFD8
         {
           // Serial.printf("Found FFD8 at: %d.\n", i);
           found_FFD8 = true;
@@ -162,9 +163,9 @@ public:
     if (_buf_read > 0)
     {
       i = 3;
-      while ((_buf_read > 0) && (!found_FFD9))
+      while ((_buf_read > 0) && (!found_FFD9))//프레임 트레일러를 찾을 때까지 반복문
       {
-        if ((_mjpeg_buf_offset > 0) && (_mjpeg_buf[_mjpeg_buf_offset - 1] == 0xFF) && (_p[0] == 0xD9)) // JPEG trailer
+        if ((_mjpeg_buf_offset > 0) && (_mjpeg_buf[_mjpeg_buf_offset - 1] == 0xFF) && (_p[0] == 0xD9)) // JPEG trailer--->FFD9
         {
           // Serial.printf("Found FFD9 at: %d.\n", i);
           found_FFD9 = true;
@@ -183,7 +184,7 @@ public:
         }
 
         // Serial.printf("i: %d\n", i);
-        memcpy(_mjpeg_buf + _mjpeg_buf_offset, _p, i);
+        memcpy(_mjpeg_buf + _mjpeg_buf_offset, _p, i); //메모디 버퍼와 오프셋을 _P 임시 구조체에 복사
         _mjpeg_buf_offset += i;
         size_t o = _buf_read - i;
         if (o > 0)
