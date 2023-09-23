@@ -2,12 +2,16 @@
 
 아주 작은 사이즈의 미니어처 매킨토시를 위한 비디오 디코딩 프로젝트
 
+-참고 자료 깃허브 :https://github.com/moononournation/RGB565_video.git
+
 - 사용한 부품
     1. Seeed Studio XIAO ESP32S3
     2. er-tftm013-1(1.3inch 240*240 pixcel IPS TFT Display with ST7789 driver)
     3. SD카드 소켓 모듈
     4. 3.7v 220mah LiPoqo배터리
 - 회로 연결
+- ![회로도 ps](https://github.com/junsuk123/MacintoshMini/assets/36057196/84737aef-259a-4c72-b19b-c8113bc85dac)
+
     - SCK-------------------->GPIO7
     - MOSI------------------->GPIO9
     - MISO------------------->GPIO8
@@ -30,5 +34,7 @@
    5. xTaskCreatePinnedToCore(drawTask, "drawTask", 16000, &_p, 1, &task, 1);//디스플레이 출력을 core 0에서 실행
    6. Events run on core 1// 기타 이벤트 등은 core 1에서 실행
    7. Arduino run on core 0// 아두이노 주 코드들은 core 0에서 실행
+  
+      
 
   #MJPEG #DECODE #MEMORY #MULTITASK #DUALCORE #ST7789 #SD
