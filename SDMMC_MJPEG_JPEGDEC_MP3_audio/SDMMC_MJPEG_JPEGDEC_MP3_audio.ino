@@ -1,6 +1,5 @@
 //SDMMC_MJPEG_JPEGDEC_MP3_audio.ino
 
-// MP3 오디오 파일과 MJPEG 비디오 파일을 재생하고 화면에 표시하는 Arduino 코드입니다.
 
 // MP3 파일의 경로 및 이름 설정
 #define MP3_FILENAME "/video.mp3"
@@ -9,7 +8,7 @@
 // MJPEG 이미지 파일의 경로 및 이름 설정
 #define MJPEG_FILENAME "/video.mjpeg"
 // MJPEG 버퍼 크기 설정 (픽셀)
-#define MJPEG_BUFFER_SIZE (240 * 240 * 2 / 4)
+#define MJPEG_BUFFER_SIZE 240 * 240 /2
 
 // 필요한 라이브러리 포함
 #include <WiFi.h>          // 인터넷 연결 서비스를 위한 라이브러리 (현재 미사용)
@@ -25,8 +24,8 @@
 #define SS 4 // SD 카드 CS 핀
 
 #define TFT_BRIGHTNESS 128 // 디스플레이 밝기 설정
-#define TFT_BL 3           // 디스플레이 백라이트 핀
-#define TFT_DC 2           // 디스플레이 DC 핀
+#define TFT_BL 2           // 디스플레이 백라이트 핀
+#define TFT_DC 3           // 디스플레이 DC 핀
 #define TFT_CS -1          // 디스플레이 CS 핀 (사용하지 않음)
 #define TFT_RES 1          // 디스플레이 Reset 핀
 #define TFT_ROT 4          // 화면 회전
@@ -54,7 +53,8 @@ uint8_t *mjpeg_buf;
 static unsigned long total_play_audio, total_read_video, total_decode_video, total_show_video;
 static unsigned long start_ms, curr_ms, next_frame_ms;
 static int skipped_frames, next_frame, time_used, total_frames;
-TaskHandle_t Task1;
+TaskHandle_t readTask,printTask;
+
 
 // 픽셀 그리기 콜백
 static int drawMCU(JPEGDRAW *pDraw)
@@ -85,7 +85,7 @@ void setup()
 #endif
 
   // SD 카드 초기화
-  if (!SD.begin(SS, SPI, 80000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
+  if (!SD.begin(SS, SPI, 40000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
   {
     Serial.println(F("ERROR: SD card mount failed!"));
     gfx->println(F("ERROR: SD card mount failed!"));
@@ -97,27 +97,6 @@ void setup()
   mp3 = new AudioGeneratorMP3();
 
   mjpeg_buf = (uint8_t *)malloc(MJPEG_BUFFER_SIZE);
-  xTaskCreatePinnedToCore(
-      displaying,     // 태스크 함수
-      "Task1",        // 태스크 이름
-      57600,          // 스택 크기 (워드 단위)
-      NULL,           // 태스크 파라미터
-      1,              // 태스크 우선순위
-      &Task1,         // 태스크 핸들
-      0);
-
-#ifdef TFT_BL
-  delay(6000);
-  ledcDetachPin(TFT_BL);
-#endif
-  gfx->displayOff();
-}
-
-void displaying(void *param)
-{
-  Serial.print(F("# Task 1 running on core "));
-  Serial.println(F(xPortGetCoreID()));
-
   if (!mjpeg_buf)
   {
     Serial.println(F("mjpeg_buf malloc failed!"));
@@ -134,8 +113,7 @@ void displaying(void *param)
   }
 
   Serial.println(F("PCM audio MJPEG video start"));
-
-  // 비디오 초기화
+// 비디오 초기화
   mjpeg.setup(&vFile, mjpeg_buf, drawMCU, true, true);
 
   // 오디오 초기화
@@ -154,8 +132,6 @@ void displaying(void *param)
 
   while (vFile.available() && mjpeg.readMjpegBuf()) // 비디오 읽기
   {
-    // 비디오 파일에 할당된 최소 스택 크기
-    Serial.println(configMINIMAL_STACK_SIZE);
 
     total_read_video += millis() - curr_ms;
     curr_ms = millis();
@@ -174,11 +150,12 @@ void displaying(void *param)
     curr_ms = millis();
 
     // 오디오 재생
-    if ((mp3->isRunning()) && (!mp3->loop()))
+    /*if ((mp3->isRunning()) && (!mp3->loop()))
     {
       mp3->stop();
     }
     total_play_audio += millis() - curr_ms;
+    */
 
     while (millis() < next_frame_ms) //다음 프레임 시간까지 대기
     {
@@ -196,7 +173,14 @@ void displaying(void *param)
   display_stat();
 
   delay(10000);
+
+#ifdef TFT_BL
+  delay(6000);
+  ledcDetachPin(TFT_BL);
+#endif
+  gfx->displayOff();
 }
+
 
 void loop()
 {
