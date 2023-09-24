@@ -85,7 +85,7 @@ void setup()
 #endif
 
   // SD 카드 초기화
-  if (!SD.begin(SS, SPI, 40000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
+  if (!SD.begin(SS, SPI, 160000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
   {
     Serial.println(F("ERROR: SD card mount failed!"));
     gfx->println(F("ERROR: SD card mount failed!"));
@@ -150,12 +150,12 @@ void setup()
     curr_ms = millis();
 
     // 오디오 재생
-    /*if ((mp3->isRunning()) && (!mp3->loop()))
+    if ((mp3->isRunning()) && (!mp3->loop()))
     {
       mp3->stop();
     }
     total_play_audio += millis() - curr_ms;
-    */
+    
 
     while (millis() < next_frame_ms) //다음 프레임 시간까지 대기
     {

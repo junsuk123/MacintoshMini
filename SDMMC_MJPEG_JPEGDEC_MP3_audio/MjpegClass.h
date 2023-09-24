@@ -4,9 +4,9 @@
 
 #define READ_BUFFER_SIZE 1024
 #define MAXOUTPUTSIZE 8
-#define NUMBER_OF_DRAW_BUFFER 4
-#define DRAWTASKMALLOC  8000
-#define DRAWTASKCORE 0
+#define NUMBER_OF_DRAW_BUFFER 2
+#define DRAWTASK_MALLOC  1600
+#define DRAWTASK_CORE 0
 
 
 #include <freertos/FreeRTOS.h>
@@ -115,14 +115,14 @@ public:
       _read_buf = (uint8_t *)malloc(READ_BUFFER_SIZE);
     }
 
-    if (_enableMultiTask)
+    if (_enableMultiTask)//만약 멀티태스크 허용되면
     {
-      if (!xqh)
+      if (!xqh)//큐 헨들러가 0일때(초기화 되지 않았을 때)
       {
         TaskHandle_t task;
         _p.drawFunc = pfnDraw;
-        xqh = xQueueCreate(NUMBER_OF_DRAW_BUFFER, sizeof(JPEGDRAW));
-        xTaskCreatePinnedToCore(drawTask, "drawTask", DRAWTASKMALLOC, &_p, 1, &task, DRAWTASKCORE);
+        xqh = xQueueCreate(NUMBER_OF_DRAW_BUFFER, sizeof(JPEGDRAW));//JPEG 프레임 만큼의 버퍼 큐를 미리 지정한 용량 만큼 설정한다.
+        xTaskCreatePinnedToCore(drawTask, "drawTask", DRAWTASK_MALLOC, &_p, 1, &task, DRAWTASK_CORE);//DrawTaskCore에서 drawTask를 실행하며 DrawRaskMalloc만큼 메모리를 할당한다.
       }
     }
 
@@ -131,10 +131,10 @@ public:
 
   bool readMjpegBuf()// Mjpeg 버퍼를 읽음
   {
-    if (_inputindex == 0)
+    if (_inputindex == 0)//만약 첫 데이터라면
     {
-      _buf_read = _input->readBytes(_read_buf, READ_BUFFER_SIZE);
-      _inputindex += _buf_read;
+      _buf_read = _input->readBytes(_read_buf, READ_BUFFER_SIZE);//입력 버퍼에 지정 할당한 메모리 크기만큼 데이터를 읽어 _buf_read에 저장한다.
+      _inputindex += _buf_read;//인덱스 하나 추가
     }
     _mjpeg_buf_offset = 0;
     int i = 0;
@@ -142,7 +142,7 @@ public:
     while ((_buf_read > 0) && (!found_FFD8))//프레임 헤더를 찾는 반복문
     {
       i = 0;
-      while ((i < _buf_read) && (!found_FFD8))
+      while ((i < _buf_read) && (!found_FFD8))//_buf_read 내에서 FFD8(비디오 파일의 헤더 파일)을 찾을 때까지 반복
       {
         if ((_read_buf[i] == 0xFF) && (_read_buf[i + 1] == 0xD8)) // JPEG header-->FFD8
         {
@@ -151,19 +151,19 @@ public:
         }
         ++i;
       }
-      if (found_FFD8)
+      if (found_FFD8)//만약 헤더 파일을 찾았으면
       {
-        --i;
+        --i;//해당 위치의 데이터를 읽기 위해 i를 1 만큼 차감
       }
       else
       {
-        _buf_read = _input->readBytes(_read_buf, READ_BUFFER_SIZE);
+        _buf_read = _input->readBytes(_read_buf, READ_BUFFER_SIZE);//탐색을 위해 _buf_read 다시 처음으로 되돌리기
       }
     }
-    uint8_t *_p = _read_buf + i;
+    uint8_t *_p = _read_buf + i;//이전에 찾은 위치로 돌아가 해당 위치에서 포인터 생성
     _buf_read -= i;
     bool found_FFD9 = false;
-    if (_buf_read > 0)
+    if (_buf_read > 0)//_buf_read가 첫 데이터가 아니라면
     {
       i = 3;
       while ((_buf_read > 0) && (!found_FFD9))//프레임 트레일러를 찾을 때까지 반복문
@@ -175,7 +175,7 @@ public:
         }
         else
         {
-          while ((i < _buf_read) && (!found_FFD9))
+          while ((i < _buf_read) && (!found_FFD9))//_buf_read 범위 내에서 파일의 트레일러 파일을 찾으면
           {
             if ((_p[i] == 0xFF) && (_p[i + 1] == 0xD9)) // JPEG trailer
             {
@@ -187,7 +187,7 @@ public:
         }
 
         // Serial.printf("i: %d\n", i);
-        memcpy(_mjpeg_buf + _mjpeg_buf_offset, _p, i); //메모디 버퍼와 오프셋을 _P 임시 구조체에 복사
+        memcpy(_mjpeg_buf + _mjpeg_buf_offset, _p, i); //메모디 버퍼와 오프셋에 _P 임시 구조체에 복사
         _mjpeg_buf_offset += i;
         size_t o = _buf_read - i;
         if (o > 0)
