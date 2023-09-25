@@ -85,7 +85,7 @@ void setup()
 #endif
 
   // SD 카드 초기화
-  if (!SD.begin(SS, SPI, 160000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
+  if (!SD.begin(SS, SPI, 80000000)) // SPI 버스 모드로 SD 카드 초기화 및 가능 여부 확인
   {
     Serial.println(F("ERROR: SD card mount failed!"));
     gfx->println(F("ERROR: SD card mount failed!"));
