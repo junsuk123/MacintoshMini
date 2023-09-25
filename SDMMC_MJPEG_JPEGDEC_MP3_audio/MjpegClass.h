@@ -4,8 +4,8 @@
 
 #define READ_BUFFER_SIZE 1024
 #define MAXOUTPUTSIZE 8
-#define NUMBER_OF_DRAW_BUFFER 2
-#define DRAWTASK_MALLOC  1600
+#define NUMBER_OF_DRAW_BUFFER 3
+#define DRAWTASK_STACKDEPTH  1600
 #define DRAWTASK_CORE 0
 
 
@@ -122,7 +122,7 @@ public:
         TaskHandle_t task;
         _p.drawFunc = pfnDraw;
         xqh = xQueueCreate(NUMBER_OF_DRAW_BUFFER, sizeof(JPEGDRAW));//JPEG 프레임 만큼의 버퍼 큐를 미리 지정한 용량 만큼 설정한다.
-        xTaskCreatePinnedToCore(drawTask, "drawTask", DRAWTASK_MALLOC, &_p, 1, &task, DRAWTASK_CORE);//DrawTaskCore에서 drawTask를 실행하며 DrawRaskMalloc만큼 메모리를 할당한다.
+        xTaskCreatePinnedToCore(drawTask, "drawTask",DRAWTASK_STACKDEPTH, &_p, 1, &task, DRAWTASK_CORE);//DrawTaskCore에서 drawTask를 실행하며 DrawRaskMalloc만큼 메모리를 할당한다.
       }
     }
 
