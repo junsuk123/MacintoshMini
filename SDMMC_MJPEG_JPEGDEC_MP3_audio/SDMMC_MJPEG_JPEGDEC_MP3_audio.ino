@@ -8,7 +8,7 @@
 // MJPEG 이미지 파일의 경로 및 이름 설정
 #define MJPEG_FILENAME "/video.mjpeg"
 // MJPEG 버퍼 크기 설정 (픽셀)
-#define MJPEG_BUFFER_SIZE 240 * 240 *24/8
+#define MJPEG_BUFFER_SIZE 240 * 240 *24
 
 // 필요한 라이브러리 포함
 #include <WiFi.h>          // 인터넷 연결 서비스를 위한 라이브러리 (현재 미사용)
@@ -170,7 +170,7 @@ void setup()
   vFile.close();//비디오 및 오디오 파일 닫기
   aFile->close();
 
-  display_stat();
+  //display_stat();
 
   delay(10000);
 

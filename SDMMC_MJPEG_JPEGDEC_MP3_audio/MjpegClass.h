@@ -3,9 +3,9 @@
 #define _MJPEGCLASS_H_
 
 #define READ_BUFFER_SIZE 1024
-#define MAXOUTPUTSIZE 8
-#define NUMBER_OF_DRAW_BUFFER 3
-#define DRAWTASK_STACKDEPTH  1600
+#define MAXOUTPUTSIZE 16
+#define NUMBER_OF_DRAW_BUFFER 144
+#define DRAWTASK_STACKDEPTH  24000
 #define DRAWTASK_CORE 0
 
 
@@ -146,7 +146,7 @@ public:
       {
         if ((_read_buf[i] == 0xFF) && (_read_buf[i + 1] == 0xD8)) // JPEG header-->FFD8
         {
-          // Serial.printf("Found FFD8 at: %d.\n", i);
+          Serial.printf("Found FFD8 at: %d.\n", i);
           found_FFD8 = true;
         }
         ++i;
@@ -170,7 +170,7 @@ public:
       {
         if ((_mjpeg_buf_offset > 0) && (_mjpeg_buf[_mjpeg_buf_offset - 1] == 0xFF) && (_p[0] == 0xD9)) // JPEG trailer--->FFD9
         {
-          // Serial.printf("Found FFD9 at: %d.\n", i);
+          Serial.printf("Found FFD9 at: %d.\n", i);
           found_FFD9 = true;
         }
         else
