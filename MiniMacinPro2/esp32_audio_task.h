@@ -80,20 +80,21 @@ static void aac_player_task(void *pvParam) {
         // 현재 버튼 상태를 읽어옴 (버튼 대신 isPause 값을 확인)
         bool isClicked =(digitalRead(17) == HIGH);
         if(isClicked&&isPlaying){//일시정지
-            isPlaying = false;
+            isPlaying = false;//재생 상태를 일시 정지로 바꿈
             Serial.println("Pause audio!!");
-            delay(300);
+            delay(200);
             startPlaybackTime = 0;
         }
         else if(isClicked&&!isPlaying){//영상 재생 재개
-          isPlaying = true;
+          isPlaying = true;//재생 상태를 재생으로 바꿈
+          Serial.println("Resume audio!!");
+          delay(200);
           startPlaybackTime = millis();
-          Serial.println("Resume audio");
         }
 
         // 오디오 재생 중일 때만 처리
-        if (isPlaying) {
-            if (startPlaybackTime == 0) {
+        if (isPlaying) {//재생상태가 true일 때
+            if (startPlaybackTime == 0) {//일시 정지 혹은 영상 재생 시작때에는 SPT가 0이 됨->코드 자체에는 아무런 영향이 없음.
                 startPlaybackTime = millis();
             }
 

@@ -235,11 +235,13 @@ void playVideo(char file[50]) {
         if(isClicked&&isPlaying){
           isPlaying = false;//재생 상태 업데이트
           Serial.println("Pause mjpeg!!");
+          delay(200);
           pause_start_ms = millis();// 일시 정지 시간을 기록
         }
         else if(isClicked&&!isPlaying){
           isPlaying = true;//재생 상태 업데이트
-          Serial.println("Resume mjpeg");
+          Serial.println("Resume mjpeg!!");
+          delay(200);
           long pause_duration = millis() - pause_start_ms;//일시정지 시작 시각을 현재시간에서 차감(일시정지 시간 기록)
           start_ms += pause_duration;//동영상 재생 시작 시각에 일시 정지 시간 추가
           next_frame_ms += pause_duration;
