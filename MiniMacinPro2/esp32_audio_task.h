@@ -8,6 +8,7 @@ static unsigned long total_decode_audio_ms = 0;
 static unsigned long total_play_audio_ms = 0;
 struct TaskParameters{//오디오 태스크에 여러개의 인자를 전달하기 위한 구조체
     Stream *input;
+    int buttonPin_aac;
 };
 static i2s_port_t _i2s_num;
 static esp_err_t i2s_init(i2s_port_t i2s_num, uint32_t sample_rate,
@@ -70,44 +71,38 @@ static libhelix::AACDecoderHelix _aac(aacAudioDataCallback);
 static void aac_player_task(void *pvParam) {
     TaskParameters *taskParams = (TaskParameters *)pvParam;//인자 구조체 선언
     Stream *input = taskParams->input;// 오디오 파일 주소
-    bool isPlaying=true;
+    bool isPlaying_aac=true;
     unsigned long startPlaybackTime = 0; // 오디오 재생 시작 시간 기록
 
     int r, w;// r: 현재까지 남은 오디오 프레임 수, w: 출력한 오디오 프레임 수
     unsigned long ms = millis();
 
     while (r = input->readBytes(_frame, MP3_MAX_FRAME_SIZE)) {
+      isPlaying_aac=(digitalRead(taskParams->buttonPin_aac)==LOW);        
+      if (startPlaybackTime == 0) {//일시 정지 혹은 영상 재생 시작때에는 SPT가 0이 됨->코드 자체에는 아무런 영향이 없음.
+        startPlaybackTime = millis();
+      }
+
+      // 디코딩한 오디오를 재생
+      while (r > 0) {
         // 현재 버튼 상태를 읽어옴 (버튼 대신 isPause 값을 확인)
-        bool isClicked =(digitalRead(17) == HIGH);
-        if(isClicked&&isPlaying){//일시정지
-            isPlaying = false;//재생 상태를 일시 정지로 바꿈
-            Serial.println("Pause audio!!");
-            delay(200);
-            startPlaybackTime = 0;
+        isPlaying_aac=(digitalRead(taskParams->buttonPin_aac)==LOW);
+        if(!isPlaying_aac){//일시정지
+          Serial.println("Pause audio!!");
+          startPlaybackTime = 0;
         }
-        else if(isClicked&&!isPlaying){//영상 재생 재개
-          isPlaying = true;//재생 상태를 재생으로 바꿈
+        else if(isPlaying_aac){//영상 재생
           Serial.println("Resume audio!!");
-          delay(200);
           startPlaybackTime = millis();
-        }
+          w = _aac.write(_frame, r);
+          r -= w;
+        }   
+      }
 
-        // 오디오 재생 중일 때만 처리
-        if (isPlaying) {//재생상태가 true일 때
-            if (startPlaybackTime == 0) {//일시 정지 혹은 영상 재생 시작때에는 SPT가 0이 됨->코드 자체에는 아무런 영향이 없음.
-                startPlaybackTime = millis();
-            }
-
-            // 오디오 데이터를 디코딩하고 재생
-            while (r > 0) {
-                w = _aac.write(_frame, r);
-                r -= w;
-            }
-
-            total_decode_audio_ms += millis() - ms;
-            ms = millis();
-        }
+      total_decode_audio_ms += millis() - ms;
+      ms = millis();
     }
+    Serial.println("---------------------Audio is end!!");
 
     // 재생이 끝나면 상태 초기화 및 작업 종료
     log_i("AAC stop.");

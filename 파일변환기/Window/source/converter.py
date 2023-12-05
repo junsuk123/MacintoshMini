@@ -5,12 +5,20 @@ from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import simpledialog
 
+def get_current_path():
+    if getattr(sys, 'frozen', False):  # 실행 파일로 빌드된 경우
+        return os.path.dirname(sys.executable)
+    elif __file__:
+        return os.path.dirname(os.path.abspath(__file__))
+    return os.getcwd()
+
 def convert_video(video_file_path,volume):
     # 비디오 파일 이름 추출
     video_file_name = os.path.splitext(os.path.basename(video_file_path))[0]
 
     # 현재 스크립트 파일의 디렉토리 가져오기
-    script_directory = os.path.dirname(os.path.abspath(__file__))
+    script_directory = os.path.join(get_current_path(), "_internal")
+    ffmpeg_path = os.path.join(script_directory, "ffmpeg.exe")
 
     # 파일 이름을 팝업 창으로 표시
     # messagebox.showinfo("안내", f"선택한 비디오 파일 이름: {video_file_name}")
