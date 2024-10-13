@@ -69,4 +69,3 @@ AAC 파일을 실시간으로 디코딩하고 스피커로 출력합니다.
 아두이노 공식 웹사이트: Arduino
 ESP32 개발 자료: ESP32 Documentation
 TFT LCD 및 I2S 앰프 데이터시트: 제공된 자료 링크 참고
-#MJPEG #DECODE #MEMORY #MULTITASK #DUALCORE #ST7789 #SD
