@@ -6,8 +6,10 @@
 #include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <driver/gpio.h>
 #include <driver/i2s.h>
 #include <esp_heap_caps.h>
+#include <esp_sleep.h>
 
 #include "AACDecoderHelix.h"
 #include "config.h"
@@ -82,6 +84,14 @@ FrameBuffer framePool[cfg::DecodeBufferCount];
 uint16_t* rgbPool[cfg::RgbFrameCount] = {nullptr};
 uint16_t* decodeTarget = nullptr;  // full-frame buffer the decoder is currently filling
 
+// Video scaling to fit the case margins. videoScaleBuf holds the shrunk frame
+// (null when no scaling is needed); videoColLut maps each output column to a
+// source column (rows are mapped on the fly).
+uint16_t* videoScaleBuf = nullptr;
+uint16_t videoColLut[cfg::VideoDrawWidth];
+constexpr bool kVideoScaling =
+    cfg::VideoDrawWidth != cfg::VideoFrameWidth || cfg::VideoDrawHeight != cfg::VideoFrameHeight;
+
 i2s_port_t i2sPort = I2S_NUM_0;
 int currentAudioRate = 0;
 TaskHandle_t audioTaskHandle = nullptr;
@@ -98,6 +108,13 @@ volatile int16_t audioGainQ8 = 128;
 // task overlays a bar until it expires. volumePercent is the level it shows.
 volatile int volumePercent = 70;
 volatile uint32_t volumeOverlayUntilMs = 0;
+
+// Battery state, refreshed by batteryTask and read by the draw task. batteryLow
+// drives the on-screen red lightning "charge me" warning.
+volatile float batteryVoltage = 0.0f;
+volatile int batteryPercent = 100;
+volatile bool batteryLow = false;
+volatile bool batteryCharging = false;   // charger attached (inferred from voltage trend)
 
 // Maps a 0..1 volume setting to a Q8 linear gain. Perceived loudness is roughly
 // square-law, so the curve gives finer control at low levels.
@@ -153,10 +170,10 @@ void drawStatus(const char* line1, const char* line2 = "") {
   gfx.fillScreen(BLACK);
   gfx.setTextColor(WHITE);
   gfx.setTextSize(2);
-  gfx.setCursor(10, 86);
+  gfx.setCursor(10, 86 + cfg::VideoTopMargin);
   gfx.println(line1);
   gfx.setTextSize(1);
-  gfx.setCursor(10, 122);
+  gfx.setCursor(10, 122 + cfg::VideoTopMargin);
   gfx.println(line2);
 }
 
@@ -303,6 +320,48 @@ void buzzerTick(uint32_t freqHz, float loudness) {
   ledcWrite(cfg::BuzzerLedcChannel, duty);                // scale loudness to volume
   vTaskDelay(pdMS_TO_TICKS(cfg::BuzzerHapticMs));
   ledcWrite(cfg::BuzzerLedcChannel, 0);                   // stop
+}
+
+// Samples the battery divider on GPIO1 and publishes voltage / percent / low
+// flag. analogReadMilliVolts applies the chip's ADC calibration, so we only undo
+// the external divider. Charging (ETA6098) is autonomous; we just report level.
+void batteryTask(void*) {
+  analogSetPinAttenuation(cfg::PinBatteryAdc, ADC_11db);  // covers the ~1.4 V max at the pin
+
+  float prevV = -1.0f;  // previous sample, for the plug/unplug voltage step
+
+  for (;;) {
+    const int samples = 16;
+    uint32_t accMv = 0;
+    for (int i = 0; i < samples; ++i) {
+      accMv += analogReadMilliVolts(cfg::PinBatteryAdc);
+      vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    float vbat = (accMv / static_cast<float>(samples)) / 1000.0f * cfg::BatteryDividerRatio;
+    float pct = (vbat - cfg::BatteryEmptyVoltage) /
+                (cfg::BatteryFullVoltage - cfg::BatteryEmptyVoltage) * 100.0f;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+
+    // Charge detection: a positive voltage step (plugged in) or sitting at/above
+    // "full" -> charging; a negative step (unplugged, load sags) or below "clear"
+    // -> not charging. Otherwise keep the current state (hysteresis).
+    float dv = (prevV < 0.0f) ? 0.0f : (vbat - prevV);
+    if (vbat >= cfg::BatteryChargeFullVoltage || dv > cfg::BatteryChargeStepVoltage) {
+      batteryCharging = true;
+    } else if (vbat < cfg::BatteryChargeClearVoltage || dv < -cfg::BatteryChargeStepVoltage) {
+      batteryCharging = false;
+    }
+    prevV = vbat;
+
+    batteryVoltage = vbat;
+    batteryPercent = static_cast<int>(pct + 0.5f);
+    batteryLow = vbat < cfg::BatteryLowVoltage;
+    Serial.printf("[batt] %.2f V  %d%%  %s\n", vbat, batteryPercent,
+                  batteryCharging ? "CHARGING" : (batteryLow ? "LOW" : "ok"));
+
+    vTaskDelay(pdMS_TO_TICKS(cfg::BatterySampleIntervalMs));
+  }
 }
 
 // Tilt-to-volume control driven by the onboard QMI8658 IMU.
@@ -559,7 +618,7 @@ void drawVolumeOverlay(int percent) {
   const int barW = 180;
   const int barH = 14;
   const int x = (cfg::VideoFrameWidth - barW) / 2;
-  const int y = 208;
+  const int y = 168 + cfg::VideoTopMargin;   // shift with the rest of the content (raised 40 px total)
   const int fillW = (barW - 4) * percent / 100;
 
   gfx.setTextColor(WHITE, BLACK);
@@ -574,11 +633,142 @@ void drawVolumeOverlay(int percent) {
   gfx.drawRect(x, y, barW, barH, WHITE);                 // border
 }
 
+// "Charge me" warning: a red lightning bolt with the battery percent, on a dark
+// rounded badge at the top-right so it stays legible over any frame. Like the
+// volume bar, the next frame redraw erases it, so it self-clears when the
+// battery is no longer low.
+void drawLowBatteryWarning() {
+  const int bw = 30, bh = 44;
+  const int bx = cfg::VideoFrameWidth - bw - 4;   // top-right, 4 px margin
+  const int by = 4 + cfg::VideoTopMargin;         // shift below the case bezel
+  gfx.fillRoundRect(bx, by, bw, bh, 4, BLACK);
+  gfx.drawRoundRect(bx, by, bw, bh, 4, RED);
+
+  const int ox = bx + 8, oy = by + 4;             // bolt origin inside the badge
+  gfx.fillTriangle(ox + 9, oy + 0, ox + 1, oy + 13, ox + 8, oy + 11, RED);
+  gfx.fillTriangle(ox + 6, oy + 24, ox + 14, oy + 9, ox + 5, oy + 12, RED);
+
+  gfx.setTextColor(RED);
+  gfx.setTextSize(1);
+  gfx.setCursor(bx + 5, by + bh - 12);
+  gfx.printf("%d%%", batteryPercent);
+}
+
+// Scales an RGB colour by k (0..1) and packs it to RGB565 -- used for the neon
+// pulse/glow (a dimmed copy of the base colour).
+inline uint16_t dim565(uint8_t r, uint8_t g, uint8_t b, float k) {
+  if (k < 0.0f) k = 0.0f;
+  if (k > 1.0f) k = 1.0f;
+  return gfx.color565(static_cast<uint8_t>(r * k),
+                      static_cast<uint8_t>(g * k),
+                      static_cast<uint8_t>(b * k));
+}
+
+// Full-screen charging display: a big centered neon lightning bolt (cyan->green
+// gradient, pulsing glow), a "CHARGING" label, and a large battery percent. Only
+// the animated region is cleared each call so it can be looped without flicker;
+// the caller fills the screen black once on entry. Shown whenever charging,
+// regardless of SD/playback state.
+void drawChargingScreenCentered() {
+  const int cx = cfg::VideoFrameWidth / 2;   // 120
+  // Centre of the visible window (between the top and bottom case margins).
+  const int cy = (cfg::VideoTopMargin + (cfg::TftHeight - cfg::VideoBottomMargin)) / 2;
+  const float pulse = 0.55f + 0.45f * (0.5f + 0.5f * sinf(millis() * 0.006f));
+
+  int pct = batteryPercent;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+
+  // Fill colour by level: <=19% red, <=79% yellow, else 연두 (yellow-green).
+  uint8_t br, bg, bb;
+  if (pct <= 19) { br = 255; bg = 45;  bb = 45; }
+  else if (pct <= 79) { br = 255; bg = 210; bb = 0; }
+  else { br = 170; bg = 255; bb = 60; }
+  const uint16_t solid = gfx.color565(br, bg, bb);
+  const uint16_t glow = dim565(br, bg, bb, pulse);   // pulsing outline/nub
+
+  // Half-size, compact layout centred on cy.
+  const int bw = 48, bh = 76;
+  const int bx = cx - bw / 2;
+  const int by = cy - bh / 2 + 4;            // body, roughly centred
+  const int nubW = 20, nubH = 6;
+
+  gfx.fillRect(cx - 37, cy - 62, 74, 130, BLACK);   // clear the compact region
+
+  // "CHARGING" label (small) above the battery
+  gfx.setTextColor(dim565(0, 255, 180, pulse));
+  gfx.setTextSize(1);
+  gfx.setCursor(cx - 24, by - nubH - 12);
+  gfx.print("CHARGING");
+
+  // Battery outline: body + top nub, fills bottom-up in 20 segments.
+  gfx.fillRect(cx - nubW / 2, by - nubH, nubW, nubH, glow);   // terminal nub
+  gfx.drawRoundRect(bx, by, bw, bh, 5, glow);                 // body outline
+  gfx.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 4, glow);
+
+  const int pad = 5;
+  const int innerX = bx + pad, innerY = by + pad;
+  const int innerW = bw - 2 * pad, innerH = bh - 2 * pad;
+  const int segs = 20;
+  const int gap = 1;
+  const int segH = (innerH - (segs - 1) * gap) / segs;
+  int filled = (pct + 2) / 5;                 // 20 steps, ~round to nearest 5%
+  if (filled > segs) filled = segs;
+  for (int i = 0; i < filled; ++i) {          // i = 0 is the bottom segment
+    int sy = innerY + innerH - (i + 1) * segH - i * gap;
+    gfx.fillRect(innerX, sy, innerW, segH, solid);
+  }
+
+  // Percent below the battery
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d%%", pct);
+  gfx.setTextColor(solid);
+  gfx.setTextSize(2);
+  gfx.setCursor(cx - static_cast<int>(strlen(buf)) * 6, by + bh + 4);
+  gfx.print(buf);
+}
+
+// Paints the non-charging status overlays (volume bar, low-battery warning) on top
+// of the current frame. Charging is handled by the full-screen path, not here.
+// Returns true if anything was drawn so the pause path knows to keep refreshing.
+bool drawStatusOverlays() {
+  bool any = false;
+  if (millis() < volumeOverlayUntilMs) {
+    drawVolumeOverlay(volumePercent);
+    any = true;
+  }
+  if (batteryLow) {
+    drawLowBatteryWarning();
+    any = true;
+  }
+  return any;
+}
+
+// Pushes one decoded frame to the panel, scaling it into the target rectangle
+// (between the case margins) when scaling is enabled. Nearest-neighbour via a
+// precomputed column LUT; near-1:1 shrink, so quality is fine.
+void drawScaledFrame(const uint16_t* fb) {
+  if (!kVideoScaling) {
+    gfx.draw16bitRGBBitmap(cfg::VideoDrawX, cfg::VideoDrawY,
+                           const_cast<uint16_t*>(fb), cfg::VideoFrameWidth, cfg::VideoFrameHeight);
+    return;
+  }
+  for (int oy = 0; oy < cfg::VideoDrawHeight; ++oy) {
+    const uint16_t* srow = fb + (oy * cfg::VideoFrameHeight / cfg::VideoDrawHeight) * cfg::VideoFrameWidth;
+    uint16_t* drow = videoScaleBuf + oy * cfg::VideoDrawWidth;
+    for (int ox = 0; ox < cfg::VideoDrawWidth; ++ox) {
+      drow[ox] = srow[videoColLut[ox]];
+    }
+  }
+  gfx.draw16bitRGBBitmap(cfg::VideoDrawX, cfg::VideoDrawY, videoScaleBuf,
+                         cfg::VideoDrawWidth, cfg::VideoDrawHeight);
+}
+
 void drawTask(void*) {
   uint16_t* fb = nullptr;
-  uint16_t* lastFb = nullptr;    // most recent frame, retained so the volume
-                                 // overlay can be refreshed over it while paused
-  bool pauseOverlayShown = false;
+  uint16_t* lastFb = nullptr;    // most recent frame, retained so overlays can be
+                                 // refreshed over it while paused
+  bool overlayShown = false;     // any status overlay currently painted on screen
   for (;;) {
     if (xQueueReceive(drawRgbQueue, &fb, pdMS_TO_TICKS(80)) == pdTRUE) {
       if (!fb) {
@@ -586,14 +776,10 @@ void drawTask(void*) {
       }
       // One large contiguous transfer per frame instead of dozens of small ones.
       uint32_t t0 = micros();
-      gfx.draw16bitRGBBitmap(
-          0, cfg::VideoTopMargin, fb, cfg::VideoFrameWidth, cfg::VideoFrameHeight);
-      if (millis() < volumeOverlayUntilMs) {
-        drawVolumeOverlay(volumePercent);
-      }
+      drawScaledFrame(fb);
+      overlayShown = drawStatusOverlays();
       stats.lastDrawUs = micros() - t0;
       stats.framesDrawn++;
-      pauseOverlayShown = false;
       // Keep this frame around for pause-time refreshes; recycle the previous one.
       if (lastFb) {
         xQueueSend(freeRgbQueue, &lastFb, portMAX_DELAY);
@@ -601,20 +787,14 @@ void drawTask(void*) {
       lastFb = fb;
     } else if (pauseRequested && lastFb) {
       // Paused: no new frames arrive, so refresh the retained frame here to keep
-      // the volume overlay live while the user adjusts volume. Redrawing the
-      // frame first erases the previous bar, so it self-clears once the overlay
-      // lingers out -- same contract as during playback. Do nothing when there is
-      // nothing to show, leaving the frozen frame untouched.
-      bool overlayActive = millis() < volumeOverlayUntilMs;
-      if (overlayActive || pauseOverlayShown) {
-        gfx.draw16bitRGBBitmap(
-            0, cfg::VideoTopMargin, lastFb, cfg::VideoFrameWidth, cfg::VideoFrameHeight);
-        if (overlayActive) {
-          drawVolumeOverlay(volumePercent);
-          pauseOverlayShown = true;
-        } else {
-          pauseOverlayShown = false;  // erased on this pass; stop refreshing
-        }
+      // the overlays live (and to animate the charging glow). Redrawing the frame
+      // first erases the previous overlays, so they self-clear once inactive --
+      // same contract as during playback. `overlayShown` forces one final redraw
+      // after the last overlay turns off so it gets erased.
+      bool needOverlay = (millis() < volumeOverlayUntilMs) || batteryCharging || batteryLow;
+      if (needOverlay || overlayShown) {
+        drawScaledFrame(lastFb);
+        overlayShown = drawStatusOverlays();
       }
     }
   }
@@ -651,6 +831,19 @@ bool initVideoPipeline() {
       return false;
     }
     xQueueSend(freeRgbQueue, &rgbPool[i], 0);
+  }
+
+  // Scaling target buffer + column LUT (only when the video is shrunk to fit the
+  // case margins).
+  if (kVideoScaling) {
+    for (int ox = 0; ox < cfg::VideoDrawWidth; ++ox) {
+      videoColLut[ox] = static_cast<uint16_t>(ox * cfg::VideoFrameWidth / cfg::VideoDrawWidth);
+    }
+    videoScaleBuf = static_cast<uint16_t*>(
+        allocateLarge(static_cast<size_t>(cfg::VideoDrawWidth) * cfg::VideoDrawHeight * sizeof(uint16_t)));
+    if (!videoScaleBuf) {
+      return false;
+    }
   }
 
   BaseType_t ok1 = xTaskCreatePinnedToCore(
@@ -792,6 +985,10 @@ bool playClip(const char* clipName) {
   shakePauseToggle = false;
 
   while (videoFile.available() && !nextRequested) {
+    // Charger plugged in mid-clip: abort so loop() switches to the charging screen.
+    if (batteryCharging) {
+      break;
+    }
     // Pause toggles from either the physical button or an up/down shake take the
     // same path: flip pauseRequested and, on resume, advance `start` by the paused
     // duration. The audio task holds its exact byte position while paused and the
@@ -1051,9 +1248,106 @@ void playLoadingScreen() {
   playSpecialClip(cfg::LoadingClipName);
 }
 
+// --- SD-insertion power control ---
+// A card is "present" when the reader answers CMD0 -- the reader is only powered
+// when a card closes the socket's detect switch, so this doubles as insertion
+// detection without a dedicated GPIO.
+bool sdCardPresent() {
+  return probeSdBus(cfg::PinSdCs, cfg::PinSdSck, cfg::PinSdMiso, cfg::PinSdMosi);
+}
+
+// Between-clip check (safe to tear down the SPI bus here). Returns false if the
+// card is gone; if still present it is re-mounted for the next clip.
+bool sdCardStillMounted() {
+  SD.end();
+  if (!sdCardPresent()) {
+    return false;
+  }
+  return mountSdAt(cfg::PinSdCs, cfg::PinSdSck, cfg::PinSdMiso, cfg::PinSdMosi);
+}
+
+// Full-screen charging mode: stop audio and animate the centered charging screen
+// until the charger is unplugged. Only the draw task owns gfx normally, but it is
+// idle here (no frames are queued), so drawing directly is race-free.
+void runChargingScreen() {
+  Serial.println("[power] charging -> full-screen charging display");
+  stopAudio();
+  pinMode(cfg::PinTftBl, OUTPUT);
+  digitalWrite(cfg::PinTftBl, HIGH);
+  gfx.fillScreen(BLACK);
+  while (batteryCharging) {
+    drawChargingScreenCentered();
+    delay(40);
+  }
+  gfx.fillScreen(BLACK);
+  Serial.println("[power] unplugged -> resuming");
+}
+
+// Powered without a card (only possible on USB -- on battery "no card" means the
+// latch never fired and we are simply off). Show the charging screen while a
+// charger is attached, otherwise blank the panel. Returns once a card is inserted.
+void idleNoCard() {
+  bool screenOn = true;
+  gfx.fillScreen(BLACK);
+  Serial.println("[sd] powered without a card (USB?) -> waiting for a card");
+  while (!sdCardPresent()) {
+    if (batteryCharging) {
+      if (!screenOn) {
+        digitalWrite(cfg::PinTftBl, HIGH);
+        gfx.fillScreen(BLACK);
+        screenOn = true;
+      }
+      drawChargingScreenCentered();
+      delay(40);
+    } else {
+      if (screenOn) {
+        gfx.fillScreen(BLACK);
+        digitalWrite(cfg::PinTftBl, LOW);
+        screenOn = false;
+      }
+      delay(cfg::SdAbsentPollMs);
+    }
+  }
+  digitalWrite(cfg::PinTftBl, HIGH);
+  gfx.fillScreen(BLACK);
+  Serial.println("[sd] card inserted -> starting");
+}
+
+// The button-less power-off: release the SYS_EN latch. On battery this cuts power
+// completely. If USB is attached, VBUS keeps the board alive, so we idle with the
+// screen off and reboot if a card returns.
+void powerOff() {
+  Serial.println("[power] releasing SYS_EN -> power off");
+  Serial.flush();
+  pinMode(cfg::PinTftBl, OUTPUT);
+  digitalWrite(cfg::PinTftBl, LOW);
+  if (cfg::UseBoardV2PowerPins) {
+    digitalWrite(cfg::PinPowerHold, LOW);   // battery: power cut here
+  }
+  for (;;) {                                // only reached if USB still powers us
+    if (sdCardPresent()) {
+      ESP.restart();
+    }
+    delay(300);
+  }
+}
+
 }  // namespace
 
 void setup() {
+  // Assert the SYS_EN power latch FIRST -- before the boot delay, radios, or
+  // anything else -- handing the pad over from any deep-sleep hold WITHOUT letting
+  // it float. Releasing the hold before re-driving HIGH (the previous order) let
+  // SYS_EN drop on reset, so the board cut its own power and only USB/VBUS or the
+  // power button could revive it. Drive HIGH, then clear any stale hold: both are
+  // HIGH so the pad never glitches.
+  if (cfg::UseBoardV2PowerPins) {
+    pinMode(cfg::PinPowerHold, OUTPUT);
+    digitalWrite(cfg::PinPowerHold, HIGH);
+    gpio_hold_dis(static_cast<gpio_num_t>(cfg::PinPowerHold));
+    gpio_deep_sleep_hold_dis();
+  }
+
   WiFi.mode(WIFI_OFF);
   Serial.begin(cfg::SerialBaud);
   delay(300);
@@ -1061,6 +1355,7 @@ void setup() {
 
   sdMutex = xSemaphoreCreateMutex();
   initButtons();
+
   if (!initDisplay()) {
     Serial.println("[fatal] display init failed");
   }
@@ -1075,10 +1370,21 @@ void setup() {
   xTaskCreatePinnedToCore(
       imuVolumeTask, "imuVol", 4096, nullptr, 1, nullptr, cfg::AudioCore);
 
+  // Battery gauge: samples GPIO1 every couple seconds; also mostly sleeps. Started
+  // before the no-card idle so it knows the charging state for the charging screen.
+  xTaskCreatePinnedToCore(
+      batteryTask, "batt", 2560, nullptr, 1, nullptr, cfg::AudioCore);
+
   if (!initVideoPipeline()) {
     drawStatus("Video init failed");
     Serial.println("[fatal] video pipeline init failed");
     return;
+  }
+
+  // Powered but no card (only happens on USB): show the charging screen while a
+  // charger is attached, otherwise idle with the panel off, until a card is in.
+  if (cfg::SdPowerControlEnable && !sdCardPresent()) {
+    idleNoCard();
   }
 
   if (!initSd()) {
@@ -1101,6 +1407,12 @@ void setup() {
 }
 
 void loop() {
+  // Charging takes over the whole screen, regardless of card/playback state.
+  if (batteryCharging) {
+    runChargingScreen();   // blocks until unplugged
+    return;                // then re-enter loop() and resume normal behavior
+  }
+
   if (playlistCount == 0) {
     drawStatus("No videos", "copy *.mjpeg and *.aac to SD");
     delay(1000);
@@ -1113,11 +1425,23 @@ void loop() {
   // loading screen does not.
   static bool firstVideo = true;
   for (size_t i = 0; i < playlistCount; ++i) {
+    if (batteryCharging) {
+      runChargingScreen();
+      return;
+    }
     if (!firstVideo) {
       playSpecialClip(cfg::TransitionClipName);
     }
     firstVideo = false;
     playClip(playlist[i].name);
+
+    // Card pulled out (and not charging)? Power off. A mid-clip removal makes
+    // playClip return early (reads fail), so this boundary check catches it. While
+    // charging we keep the charging screen instead of powering off.
+    if (cfg::SdPowerControlEnable && !batteryCharging && !sdCardStillMounted()) {
+      Serial.println("[sd] card removed -> power off");
+      powerOff();
+    }
   }
 
   if (!cfg::LoopPlaylist) {

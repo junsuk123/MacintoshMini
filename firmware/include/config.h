@@ -96,6 +96,42 @@ constexpr int ShakeCrossingsNeeded = 3;          // alternating up/down crossing
 constexpr uint32_t ShakeWindowMs = 700;          // crossings must complete within this span
 constexpr uint32_t ShakeCooldownMs = 1200;       // debounce after a toggle; also mutes tilt-volume during a shake
 
+// --- Battery monitoring (ETA6098 charger; BAT_ADC on GPIO1 = ADC1_CH0) ---
+// Per the V2 schematic the battery B+ is divided by (R3 + R7) / R7 =
+// (200K + 100K) / 100K = 3 into GPIO1. Charging over USB-C is done entirely by
+// the ETA6098 in hardware; firmware only samples the level to warn when it is
+// low. Voltages are single-cell LiPo. Percent is a rough linear estimate.
+constexpr int PinBatteryAdc = 1;
+constexpr float BatteryDividerRatio = 3.0f;      // multiply ADC pin voltage by this to get B+
+constexpr uint32_t BatterySampleIntervalMs = 2000;
+constexpr float BatteryFullVoltage = 4.20f;
+constexpr float BatteryEmptyVoltage = 3.30f;
+constexpr float BatteryLowVoltage = 3.45f;       // below this -> red lightning charge warning
+
+// Charging is inferred from the battery voltage (no charge-status GPIO exists).
+// Plugging in makes B+ jump up (charger drives it / load moves to USB); unplugging
+// makes it sag under load. So a positive step between samples (or sitting at/above
+// "full") means charging; a negative step (or dropping below "clear") means not.
+// Hysteresis holds the state between transients. It's a heuristic, but the
+// plug/unplug jump is usually clear, so it flips within ~one sample interval.
+constexpr float BatteryChargeFullVoltage = 4.15f;   // at/above -> charging (topped up on charger)
+constexpr float BatteryChargeClearVoltage = 3.90f;  // below -> definitely not charging
+constexpr float BatteryChargeStepVoltage = 0.03f;   // per-sample jump: + = plugged in, - = unplugged
+
+// --- SD-insertion power control ---
+// The product case hides the power/reset buttons, so the SD card drives power.
+// REQUIRES a hardware change: wire the SD socket's card-detect switch IN PARALLEL
+// WITH THE POWER BUTTON (Key2) so inserting a card pulls the power latch on just
+// like a button press (the switch must CLOSE on insert). Power the reader's 3.3V
+// directly (not through that switch anymore).
+//   Insert card -> hardware powers the board on -> firmware asserts SYS_EN to hold.
+//   Remove card -> firmware sees SPI stop responding and releases SYS_EN -> off.
+// USB-C charging is independent and always works. On battery, "no card" == truly
+// off (zero draw). An electrically-off board cannot be turned on by firmware, so
+// the hardware trigger above is mandatory. Set false to keep always-on when powered.
+constexpr bool SdPowerControlEnable = true;
+constexpr uint32_t SdAbsentPollMs = 500;         // card poll interval while idle on USB power
+
 constexpr BaseType_t AudioCore = 0;
 constexpr BaseType_t DecodeCore = 0;
 constexpr BaseType_t DrawCore = 1;
@@ -119,9 +155,29 @@ constexpr size_t MaxMcuPixels = 16 * 16 * 8;
 
 // Full-frame RGB565 buffers in PSRAM: whole frame decoded once, then pushed to
 // the panel in a single large transfer instead of many small per-MCU writes.
+// Source frame size produced by the converter. Default output is 240x200; if you
+// change the converter's resolution, set these to match so the buffers/decoder
+// line up (mismatched sources are clipped, not garbled).
 constexpr int VideoFrameWidth = 240;
-constexpr int VideoFrameHeight = 240;
-constexpr int VideoTopMargin = 0;      // panel offset already applied by the driver
+constexpr int VideoFrameHeight = 200;
+// Top/bottom margins (case bezel) in panel pixels. All on-screen content is
+// pushed down by VideoTopMargin, and the video is fitted into the space between
+// the two margins. Panel is 280 px tall. Tune these to match your case.
+constexpr int VideoTopMargin = 40;
+constexpr int VideoBottomMargin = 40;
+// Fit the source frame into the visible window (between the margins), preserving
+// aspect ratio (no distortion) and centering. A source that already matches the
+// window is drawn natively (no scaling). 240x200 into a 240x200 window fits 1:1.
+constexpr int VideoWindowW = TftWidth;                                        // 240
+constexpr int VideoWindowH = TftHeight - VideoTopMargin - VideoBottomMargin;   // 280-40-40 = 200
+constexpr bool VideoWidthLimited =
+    VideoFrameWidth * VideoWindowH >= VideoFrameHeight * VideoWindowW;
+constexpr int VideoDrawWidth =
+    VideoWidthLimited ? VideoWindowW : (VideoFrameWidth * VideoWindowH / VideoFrameHeight);
+constexpr int VideoDrawHeight =
+    VideoWidthLimited ? (VideoFrameHeight * VideoWindowW / VideoFrameWidth) : VideoWindowH;
+constexpr int VideoDrawX = (TftWidth - VideoDrawWidth) / 2;               // center horizontally
+constexpr int VideoDrawY = VideoTopMargin + (VideoWindowH - VideoDrawHeight) / 2;  // center vertically
 // One buffer is held by the draw task as the last-shown frame (so the volume
 // overlay can be refreshed over it while paused), leaving three to cycle through
 // the decode/draw pipeline -- same jitter headroom as the original triple buffer.

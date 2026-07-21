@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--out", type=pathlib.Path, default=pathlib.Path("sdcard"))
     parser.add_argument("--name", default=None)
     parser.add_argument("--fps", type=int, default=25)  # match cfg::VideoFps
-    parser.add_argument("--size", default="240:240")
+    parser.add_argument("--size", default="240:200")  # match cfg::VideoFrameWidth/Height
     parser.add_argument("--video-quality", type=int, default=9)
     parser.add_argument("--audio-bitrate", default="64k")
     parser.add_argument("--ffmpeg", type=pathlib.Path, default=None)
@@ -39,7 +39,7 @@ def main():
     vf = (
         f"fps={args.fps},"
         f"scale={args.size}:force_original_aspect_ratio=decrease,"
-        "pad=240:240:(ow-iw)/2:(oh-ih)/2:black,"
+        f"pad={args.size}:(ow-iw)/2:(oh-ih)/2:black,"
         "format=yuvj420p"
     )
     run([
