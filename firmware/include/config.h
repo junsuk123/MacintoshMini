@@ -71,6 +71,19 @@ constexpr uint32_t BuzzerHapticFreqUpHz = 70;    // volume-up tick pitch
 constexpr uint32_t BuzzerHapticFreqDownHz = 45;  // volume-down tick pitch (lower = deeper)
 constexpr uint32_t BuzzerHapticMs = 25;          // tick duration
 
+// --- Shake-to-pause (up/down shake toggles playback pause) ---
+// The IMU task projects the dynamic (gravity-removed) acceleration onto the
+// gravity vector to isolate vertical motion, then counts alternating threshold
+// crossings. A deliberate up/down shake toggles pause via the same path as the
+// pause button, so audio and video stop together and resume in sync. Thresholds
+// are in raw accel LSB (accel is +-2g full scale, so 1 g ~= 16384 LSB); tune on
+// device if shakes trigger too easily or not at all.
+constexpr bool ShakePauseEnable = true;
+constexpr float ShakeAccelThreshold = 6000.0f;   // vertical dynamic accel to count a crossing (~0.37 g)
+constexpr int ShakeCrossingsNeeded = 3;          // alternating up/down crossings that make one gesture
+constexpr uint32_t ShakeWindowMs = 700;          // crossings must complete within this span
+constexpr uint32_t ShakeCooldownMs = 1200;       // debounce after a toggle; also mutes tilt-volume during a shake
+
 constexpr BaseType_t AudioCore = 0;
 constexpr BaseType_t DecodeCore = 0;
 constexpr BaseType_t DrawCore = 1;

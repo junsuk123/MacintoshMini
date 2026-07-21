@@ -62,6 +62,11 @@ size_t playlistCount = 0;
 volatile bool pauseRequested = false;
 volatile bool nextRequested = false;
 volatile bool stopRequested = false;
+// Edge signal from imuVolumeTask: an up/down shake was recognized and playClip
+// should toggle pause. Routed through playClip (not by flipping pauseRequested
+// here) so the same start-timestamp adjustment as the pause button runs, keeping
+// audio and video in sync on resume.
+volatile bool shakePauseToggle = false;
 PlayerStats stats;
 
 QueueHandle_t freeFrameQueue = nullptr;
@@ -335,6 +340,12 @@ void imuVolumeTask(void*) {
   uint32_t lastStepMs = millis();
   Serial.printf("[imu] baseline=%.1f deg, initial volume=%.2f\n", angle0, volumeSetting);
 
+  // Shake-to-pause detector state (see cfg::Shake* for tuning).
+  int shakeSign = 0;               // sign of the last counted crossing (+1/-1)
+  int shakeCrossings = 0;          // alternating crossings in the current window
+  uint32_t shakeWindowStart = 0;   // millis() of the first crossing in the window
+  uint32_t shakeCooldownUntil = 0; // ignore shakes / mute volume until this time
+
   for (;;) {
     int16_t ax, ay, az;
     if (imu::readAccel(ax, ay, az)) {
@@ -342,13 +353,50 @@ void imuVolumeTask(void*) {
       fay += alpha * (ay - fay);
       faz += alpha * (az - faz);
 
+      uint32_t now = millis();
+
+      // --- Up/down shake -> toggle pause ---
+      // (fax,fay,faz) is the slow gravity estimate (~1 g); projecting the fast
+      // (raw - filtered) residual onto it gives the vertical acceleration, so
+      // this responds to up/down motion in any orientation and ignores sideways
+      // or in/out shakes. Alternating threshold crossings that complete within
+      // ShakeWindowMs are one deliberate shake and raise shakePauseToggle. While
+      // a gesture is building or during the post-trigger cooldown we treat the
+      // IMU as "shaking" and hold volume steady so the jolt can't nudge volume.
+      bool shakeActive = now < shakeCooldownUntil;
+      if (cfg::ShakePauseEnable && !shakeActive) {
+        float g3 = sqrtf(fax * fax + fay * fay + faz * faz);
+        if (g3 > 1.0f) {
+          float vert =
+              ((ax - fax) * fax + (ay - fay) * fay + (az - faz) * faz) / g3;
+          if (shakeCrossings > 0 && now - shakeWindowStart > cfg::ShakeWindowMs) {
+            shakeCrossings = 0;  // window lapsed before the gesture completed
+            shakeSign = 0;
+          }
+          int sign = vert > cfg::ShakeAccelThreshold    ? 1
+                     : vert < -cfg::ShakeAccelThreshold ? -1
+                                                        : 0;
+          if (sign != 0 && sign != shakeSign) {
+            if (shakeCrossings == 0) shakeWindowStart = now;
+            shakeSign = sign;
+            if (++shakeCrossings >= cfg::ShakeCrossingsNeeded) {
+              shakePauseToggle = true;
+              shakeCooldownUntil = now + cfg::ShakeCooldownMs;
+              shakeCrossings = 0;
+              shakeSign = 0;
+              Serial.println("[imu] shake detected -> toggle pause");
+            }
+          }
+          shakeActive = shakeCrossings > 0;
+        }
+      }
+
       float delta = atan2f(fax, fay) * 180.0f / PI - angle0;
       while (delta > 180.0f) delta -= 360.0f;   // wrap to -180..180
       while (delta < -180.0f) delta += 360.0f;
       if (cfg::ImuVolumeInvert) delta = -delta;
 
-      uint32_t now = millis();
-      if (fabsf(delta) > cfg::VolumeDeadzoneDeg) {
+      if (!shakeActive && fabsf(delta) > cfg::VolumeDeadzoneDeg) {
         // Outside the off zone -> control ON: show the bar and step every 0.5 s.
         volumeOverlayUntilMs = now + cfg::VolumeOverlayLingerMs;
         if (now - lastStepMs >= cfg::VolumeStepIntervalMs) {
@@ -691,9 +739,20 @@ bool playClip(const char* clipName) {
   pauseRequested = false;
   nextRequested = false;
   stopRequested = false;
+  shakePauseToggle = false;
 
   while (videoFile.available() && !nextRequested) {
-    if (buttonPressed(cfg::PinButtonPause, lastPause)) {
+    // Pause toggles from either the physical button or an up/down shake take the
+    // same path: flip pauseRequested and, on resume, advance `start` by the paused
+    // duration. The audio task holds its exact byte position while paused and the
+    // video pacing clock is shifted to match, so both resume from the same instant
+    // in sync. The shake check runs even while paused, so a second shake resumes.
+    bool togglePause = buttonPressed(cfg::PinButtonPause, lastPause);
+    if (shakePauseToggle) {
+      shakePauseToggle = false;
+      togglePause = true;
+    }
+    if (togglePause) {
       pauseRequested = !pauseRequested;
       if (pauseRequested) {
         pauseStarted = millis();
