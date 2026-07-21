@@ -113,6 +113,14 @@ SD 카드 루트에 같은 이름의 `.mjpeg`와 `.aac` 파일을 둡니다.
 
 ## 영상 변환
 
+### Windows GUI 변환기
+
+Windows 사용자는 GUI 변환기로 동영상을 드래그·설정만으로 펌웨어 형식(240×240 MJPEG + 모노 AAC)으로 변환할 수 있습니다. 여러 파일을 한 번에 넣고 FPS·화질(q:v)·오디오 비트레이트·볼륨 감쇠를 지정한 뒤 변환하면 각 파일마다 `.mjpeg`/`.aac` 쌍이 생성됩니다. ffmpeg가 함께 번들되어 별도 설치가 필요 없습니다.
+
+![Windows 파일 변환기 GUI](docs/assets/file-converter-windows-gui.png)
+
+### 명령줄 변환기
+
 PC에 `ffmpeg`가 설치되어 있어야 합니다.
 
 ```bash
