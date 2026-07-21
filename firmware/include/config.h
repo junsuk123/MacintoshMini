@@ -54,8 +54,14 @@ constexpr uint8_t ImuI2cAddress = 0x6B;
 constexpr uint32_t ImuPollIntervalMs = 20;      // 50 Hz accel sampling
 constexpr float ImuFilterAlpha = 0.15f;         // EMA low-pass on accel (lower = smoother/slower)
 constexpr float VolumeDeadzoneDeg = 15.0f;      // off zone: tilt within this of baseline = control OFF
-constexpr uint32_t VolumeStepIntervalMs = 500;  // one volume step per 0.5 s while tilted
+constexpr uint32_t VolumeStepIntervalMs = 500;  // step interval just past the dead zone (slowest)
 constexpr float VolumeStep = 0.05f;             // 0..1 setting change per step (20 steps full range)
+// Tilt farther past the dead zone to change volume faster: the step interval
+// shrinks from VolumeStepIntervalMs toward VolumeStepIntervalMinMs as the tilt
+// grows from the dead-zone edge to VolumeFullSpeedDeg beyond it. Step size stays
+// VolumeStep, so far tilt just steps more often (finer control near the edge).
+constexpr float VolumeFullSpeedDeg = 45.0f;       // extra tilt past the dead zone that reaches max speed
+constexpr uint32_t VolumeStepIntervalMinMs = 120; // fastest step interval at/above full-speed tilt
 constexpr float VolumeInitial = 0.70f;          // startup volume setting (pre perceptual curve)
 constexpr bool ImuVolumeInvert = false;         // flip if clockwise lowers instead of raises volume
 constexpr uint32_t VolumeOverlayLingerMs = 1200; // keep the on-screen bar visible this long after activity
@@ -70,6 +76,12 @@ constexpr int BuzzerLedcChannel = 4;             // LEDC channel dedicated to th
 constexpr uint32_t BuzzerHapticFreqUpHz = 70;    // volume-up tick pitch
 constexpr uint32_t BuzzerHapticFreqDownHz = 45;  // volume-down tick pitch (lower = deeper)
 constexpr uint32_t BuzzerHapticMs = 25;          // tick duration
+// Tick loudness scales with the current volume. The buzzer is a PWM square wave
+// whose loudness tracks duty cycle, peaking at 50% (512 of the 10-bit 0..1023
+// range); past 50% it quiets again, so 512 is the ceiling. Duty is interpolated
+// between Min (faint floor near zero volume) and Max in proportion to the volume.
+constexpr uint32_t BuzzerHapticMaxDuty = 512;    // duty at full volume (50% = loudest)
+constexpr uint32_t BuzzerHapticMinDuty = 24;     // duty floor so a step is still felt at low volume
 
 // --- Shake-to-pause (up/down shake toggles playback pause) ---
 // The IMU task projects the dynamic (gravity-removed) acceleration onto the
@@ -110,7 +122,10 @@ constexpr size_t MaxMcuPixels = 16 * 16 * 8;
 constexpr int VideoFrameWidth = 240;
 constexpr int VideoFrameHeight = 240;
 constexpr int VideoTopMargin = 0;      // panel offset already applied by the driver
-constexpr size_t RgbFrameCount = 3;    // triple buffering to decouple decode/draw jitter
+// One buffer is held by the draw task as the last-shown frame (so the volume
+// overlay can be refreshed over it while paused), leaving three to cycle through
+// the decode/draw pipeline -- same jitter headroom as the original triple buffer.
+constexpr size_t RgbFrameCount = 4;
 
 constexpr uint32_t ButtonDebounceMs = 180;
 constexpr uint32_t TelemetryIntervalMs = 2000;

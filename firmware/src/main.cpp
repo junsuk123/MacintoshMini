@@ -286,11 +286,21 @@ void buzzerHapticInit() {
   ledcWrite(cfg::BuzzerLedcChannel, 0);  // silent until a tick fires
 }
 
-void buzzerTick(uint32_t freqHz) {
+// Emits one tick at freqHz whose loudness follows `loudness` (0..1, the current
+// volume). ledcWriteTone sets the pitch at a fixed 50% duty (10-bit scale), then
+// we override the duty so the tick gets louder as the volume rises and softer as
+// it falls -- the click tracks the level it is acknowledging.
+void buzzerTick(uint32_t freqHz, float loudness) {
   if (!cfg::BuzzerHapticEnable) {
     return;
   }
-  ledcWriteTone(cfg::BuzzerLedcChannel, freqHz);          // 50% square wave at freqHz
+  if (loudness < 0.0f) loudness = 0.0f;
+  if (loudness > 1.0f) loudness = 1.0f;
+  uint32_t duty = cfg::BuzzerHapticMinDuty +
+                  static_cast<uint32_t>(
+                      (cfg::BuzzerHapticMaxDuty - cfg::BuzzerHapticMinDuty) * loudness + 0.5f);
+  ledcWriteTone(cfg::BuzzerLedcChannel, freqHz);          // set pitch (leaves 50% duty)
+  ledcWrite(cfg::BuzzerLedcChannel, duty);                // scale loudness to volume
   vTaskDelay(pdMS_TO_TICKS(cfg::BuzzerHapticMs));
   ledcWrite(cfg::BuzzerLedcChannel, 0);                   // stop
 }
@@ -397,9 +407,18 @@ void imuVolumeTask(void*) {
       if (cfg::ImuVolumeInvert) delta = -delta;
 
       if (!shakeActive && fabsf(delta) > cfg::VolumeDeadzoneDeg) {
-        // Outside the off zone -> control ON: show the bar and step every 0.5 s.
+        // Outside the off zone -> control ON: show the bar and step. The more the
+        // device is tilted past the dead zone, the shorter the step interval, so
+        // volume ramps faster the harder you tilt.
         volumeOverlayUntilMs = now + cfg::VolumeOverlayLingerMs;
-        if (now - lastStepMs >= cfg::VolumeStepIntervalMs) {
+        float speed = (fabsf(delta) - cfg::VolumeDeadzoneDeg) / cfg::VolumeFullSpeedDeg;
+        if (speed < 0.0f) speed = 0.0f;
+        if (speed > 1.0f) speed = 1.0f;
+        uint32_t stepInterval =
+            cfg::VolumeStepIntervalMs -
+            static_cast<uint32_t>(
+                (cfg::VolumeStepIntervalMs - cfg::VolumeStepIntervalMinMs) * speed + 0.5f);
+        if (now - lastStepMs >= stepInterval) {
           lastStepMs = now;
           float prev = volumeSetting;
           if (delta > 0.0f) {  // clockwise -> louder
@@ -410,7 +429,8 @@ void imuVolumeTask(void*) {
           if (volumeSetting != prev) {  // skip haptic/log when already at a limit
             audioGainQ8 = volumeSettingToQ8(volumeSetting);
             volumePercent = static_cast<int>(volumeSetting * 100.0f + 0.5f);
-            buzzerTick(delta > 0.0f ? cfg::BuzzerHapticFreqUpHz : cfg::BuzzerHapticFreqDownHz);
+            buzzerTick(delta > 0.0f ? cfg::BuzzerHapticFreqUpHz : cfg::BuzzerHapticFreqDownHz,
+                       volumeSetting);
             Serial.printf("[imu] vol %d%% (delta=%.0f)\n", volumePercent, delta);
           }
         }
@@ -556,20 +576,50 @@ void drawVolumeOverlay(int percent) {
 
 void drawTask(void*) {
   uint16_t* fb = nullptr;
-  while (xQueueReceive(drawRgbQueue, &fb, portMAX_DELAY) == pdTRUE) {
-    if (!fb) {
-      break;
+  uint16_t* lastFb = nullptr;    // most recent frame, retained so the volume
+                                 // overlay can be refreshed over it while paused
+  bool pauseOverlayShown = false;
+  for (;;) {
+    if (xQueueReceive(drawRgbQueue, &fb, pdMS_TO_TICKS(80)) == pdTRUE) {
+      if (!fb) {
+        break;  // shutdown sentinel
+      }
+      // One large contiguous transfer per frame instead of dozens of small ones.
+      uint32_t t0 = micros();
+      gfx.draw16bitRGBBitmap(
+          0, cfg::VideoTopMargin, fb, cfg::VideoFrameWidth, cfg::VideoFrameHeight);
+      if (millis() < volumeOverlayUntilMs) {
+        drawVolumeOverlay(volumePercent);
+      }
+      stats.lastDrawUs = micros() - t0;
+      stats.framesDrawn++;
+      pauseOverlayShown = false;
+      // Keep this frame around for pause-time refreshes; recycle the previous one.
+      if (lastFb) {
+        xQueueSend(freeRgbQueue, &lastFb, portMAX_DELAY);
+      }
+      lastFb = fb;
+    } else if (pauseRequested && lastFb) {
+      // Paused: no new frames arrive, so refresh the retained frame here to keep
+      // the volume overlay live while the user adjusts volume. Redrawing the
+      // frame first erases the previous bar, so it self-clears once the overlay
+      // lingers out -- same contract as during playback. Do nothing when there is
+      // nothing to show, leaving the frozen frame untouched.
+      bool overlayActive = millis() < volumeOverlayUntilMs;
+      if (overlayActive || pauseOverlayShown) {
+        gfx.draw16bitRGBBitmap(
+            0, cfg::VideoTopMargin, lastFb, cfg::VideoFrameWidth, cfg::VideoFrameHeight);
+        if (overlayActive) {
+          drawVolumeOverlay(volumePercent);
+          pauseOverlayShown = true;
+        } else {
+          pauseOverlayShown = false;  // erased on this pass; stop refreshing
+        }
+      }
     }
-    // One large contiguous transfer per frame instead of dozens of small ones.
-    uint32_t t0 = micros();
-    gfx.draw16bitRGBBitmap(
-        0, cfg::VideoTopMargin, fb, cfg::VideoFrameWidth, cfg::VideoFrameHeight);
-    if (millis() < volumeOverlayUntilMs) {
-      drawVolumeOverlay(volumePercent);
-    }
-    stats.lastDrawUs = micros() - t0;
-    stats.framesDrawn++;
-    xQueueSend(freeRgbQueue, &fb, portMAX_DELAY);
+  }
+  if (lastFb) {
+    xQueueSend(freeRgbQueue, &lastFb, portMAX_DELAY);
   }
   vTaskDelete(nullptr);
 }
