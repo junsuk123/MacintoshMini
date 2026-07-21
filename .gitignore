@@ -1,8 +1,27 @@
-
-# Ignore all .log files
+# Runtime logs
 *.log
 
+# PlatformIO / local build output
+.pio/
+firmware/.pio/
+compile_commands.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local media sources and generated SD-card output
 *.mp4
-# Ignore compiled code
-*.dll
-ÆÄÀÏº¯È¯±â/Window¿ë.zip
+*.mov
+*.avi
+firmware/sdcard/
+firmware/sdcard-validation/
+
+# Local reference dumps
+docs/assets/*.pdf
+
+# Vendored dependencies are resolved by platformio.ini
+vendor/
+
+# Legacy packaged converter artifacts
+íŒŒì¼ë³€í™˜ê¸°/

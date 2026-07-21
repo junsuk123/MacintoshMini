@@ -42,12 +42,51 @@ constexpr int PinI2sLrck = 44;
 constexpr int PinI2sData = 43;
 constexpr uint32_t DefaultAudioRate = 44100;
 
+// --- IMU (QMI8658) tilt-based volume control ---
+// I2C bus shared with the onboard QMI8658 6-axis IMU (addr 0x6B). GPIO10/11 are
+// unused by the video/audio/SD paths. Pins follow the Waveshare reference design;
+// verify against the board schematic. If WHO_AM_I fails at boot the volume task
+// disables itself and playback continues normally.
+constexpr int PinI2cSda = 11;
+constexpr int PinI2cScl = 10;
+constexpr uint8_t ImuI2cAddress = 0x6B;
+
+constexpr uint32_t ImuPollIntervalMs = 20;      // 50 Hz accel sampling
+constexpr float ImuFilterAlpha = 0.15f;         // EMA low-pass on accel (lower = smoother/slower)
+constexpr float VolumeDeadzoneDeg = 15.0f;      // off zone: tilt within this of baseline = control OFF
+constexpr uint32_t VolumeStepIntervalMs = 500;  // one volume step per 0.5 s while tilted
+constexpr float VolumeStep = 0.05f;             // 0..1 setting change per step (20 steps full range)
+constexpr float VolumeInitial = 0.70f;          // startup volume setting (pre perceptual curve)
+constexpr bool ImuVolumeInvert = false;         // flip if clockwise lowers instead of raises volume
+constexpr uint32_t VolumeOverlayLingerMs = 1200; // keep the on-screen bar visible this long after activity
+
+// --- Buzzer haptic feedback on volume steps (magnetic buzzer on GPIO42) ---
+// Driven far below the buzzer's ~2-4 kHz resonance to favor a low tactile "tick"
+// over an audible beep. A coil buzzer has little moving mass, so expect a faint
+// click you mostly hear -- not vibration-motor-grade haptics. Tune freq/duration
+// on-device. Up ticks slightly higher than down so direction is distinguishable.
+constexpr bool BuzzerHapticEnable = true;
+constexpr int BuzzerLedcChannel = 4;             // LEDC channel dedicated to the buzzer
+constexpr uint32_t BuzzerHapticFreqUpHz = 70;    // volume-up tick pitch
+constexpr uint32_t BuzzerHapticFreqDownHz = 45;  // volume-down tick pitch (lower = deeper)
+constexpr uint32_t BuzzerHapticMs = 25;          // tick duration
+
 constexpr BaseType_t AudioCore = 0;
 constexpr BaseType_t DecodeCore = 0;
 constexpr BaseType_t DrawCore = 1;
 
 constexpr size_t FileNameLimit = 48;
 constexpr size_t MaxPlaylistItems = 96;
+
+// --- Optional intro / transition screens (independent of the playlist) ---
+// Reserved clip stems, excluded from the auto-scanned playlist. Put
+// "<name>.mjpeg" (and optionally "<name>.aac") on the SD card to enable a screen;
+// delete the file to disable it and the system skips it silently, no error.
+//   Loading    -> plays once at boot, before the playlist
+//   Transition -> plays between videos (including the loop wrap), not before the
+//                 first video after loading
+constexpr char LoadingClipName[] = "Loading";
+constexpr char TransitionClipName[] = "Transition";
 constexpr size_t ReadBufferSize = 8192;
 constexpr size_t JpegFrameBufferSize = 240 * 280 * 2 / 5;
 constexpr size_t DecodeBufferCount = 3;

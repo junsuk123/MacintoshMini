@@ -5,11 +5,13 @@
 #include <SD.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include <Wire.h>
 #include <driver/i2s.h>
 #include <esp_heap_caps.h>
 
 #include "AACDecoderHelix.h"
 #include "config.h"
+#include "imu_qmi8658.h"
 
 namespace {
 
@@ -81,6 +83,25 @@ TaskHandle_t audioTaskHandle = nullptr;
 volatile bool audioFinished = true;
 File audioFile;
 libhelix::AACDecoderHelix* aacDecoder = nullptr;
+
+// Playback gain in Q8 fixed point (256 = unity). Written by imuVolumeTask, read
+// in the audio callback on every decoded frame.
+volatile int16_t audioGainQ8 = 128;
+
+// Volume OSD state shared with the draw task. imuVolumeTask refreshes the linger
+// deadline while volume control is active (tilted out of the off zone); the draw
+// task overlays a bar until it expires. volumePercent is the level it shows.
+volatile int volumePercent = 70;
+volatile uint32_t volumeOverlayUntilMs = 0;
+
+// Maps a 0..1 volume setting to a Q8 linear gain. Perceived loudness is roughly
+// square-law, so the curve gives finer control at low levels.
+inline int16_t volumeSettingToQ8(float setting) {
+  if (setting < 0.0f) setting = 0.0f;
+  if (setting > 1.0f) setting = 1.0f;
+  float g = setting * setting;
+  return static_cast<int16_t>(g * 256.0f + 0.5f);
+}
 
 void* allocateLarge(size_t bytes) {
   void* ptr = ps_malloc(bytes);
@@ -185,6 +206,13 @@ void audioDataCallback(AACFrameInfo& info, int16_t* pcm, size_t samples, void*) 
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 
+  int16_t gain = audioGainQ8;
+  if (gain != 256) {
+    for (size_t i = 0; i < samples; ++i) {
+      pcm[i] = static_cast<int16_t>((static_cast<int32_t>(pcm[i]) * gain) >> 8);
+    }
+  }
+
   size_t written = 0;
   esp_err_t err = i2s_write(i2sPort, pcm, samples * sizeof(int16_t), &written, portMAX_DELAY);
   stats.audioCallbacks++;
@@ -242,6 +270,109 @@ void audioTask(void*) {
       stopRequested ? "stop" : "eof");
   audioFinished = true;
   vTaskDelete(nullptr);
+}
+
+// Buzzer haptic: the magnetic buzzer on GPIO42 is driven through LEDC PWM so we
+// can pick an arbitrary (low) frequency. A short low-frequency burst reads as a
+// tactile/audible "tick" acknowledging each volume step.
+void buzzerHapticInit() {
+  ledcSetup(cfg::BuzzerLedcChannel, cfg::BuzzerHapticFreqDownHz, 10);
+  ledcAttachPin(cfg::PinBuzzer, cfg::BuzzerLedcChannel);
+  ledcWrite(cfg::BuzzerLedcChannel, 0);  // silent until a tick fires
+}
+
+void buzzerTick(uint32_t freqHz) {
+  if (!cfg::BuzzerHapticEnable) {
+    return;
+  }
+  ledcWriteTone(cfg::BuzzerLedcChannel, freqHz);          // 50% square wave at freqHz
+  vTaskDelay(pdMS_TO_TICKS(cfg::BuzzerHapticMs));
+  ledcWrite(cfg::BuzzerLedcChannel, 0);                   // stop
+}
+
+// Tilt-to-volume control driven by the onboard QMI8658 IMU.
+//
+// The screen-plane gravity direction gives a "clock-face" angle. At boot we prime
+// a low-pass filter and capture that angle as the zero reference, so volume tracks
+// the tilt relative to however the device happens to be sitting. Rotating clockwise
+// past the dead-zone raises volume one step every 0.5 s; counter-clockwise lowers it.
+// If the IMU is absent the task exits and playback runs at the initial volume.
+void imuVolumeTask(void*) {
+  if (!imu::begin()) {
+    audioGainQ8 = volumeSettingToQ8(cfg::VolumeInitial);
+    Serial.println("[imu] volume control disabled; using fixed initial volume");
+    vTaskDelete(nullptr);
+    return;
+  }
+  buzzerHapticInit();
+
+  const float alpha = cfg::ImuFilterAlpha;
+  float fax = 0, fay = 0, faz = 0;  // EMA low-pass filtered accel axes
+  bool primed = false;
+
+  // Warm up the filter (~300 ms) so the baseline isn't taken from a noisy first sample.
+  for (int i = 0; i < 15; ++i) {
+    int16_t ax, ay, az;
+    if (imu::readAccel(ax, ay, az)) {
+      if (!primed) {
+        fax = ax;
+        fay = ay;
+        faz = az;
+        primed = true;
+      } else {
+        fax += alpha * (ax - fax);
+        fay += alpha * (ay - fay);
+        faz += alpha * (az - faz);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(cfg::ImuPollIntervalMs));
+  }
+
+  const float angle0 = atan2f(fax, fay) * 180.0f / PI;  // baseline = 0 reference
+  float volumeSetting = cfg::VolumeInitial;
+  audioGainQ8 = volumeSettingToQ8(volumeSetting);
+  volumePercent = static_cast<int>(volumeSetting * 100.0f + 0.5f);
+  uint32_t lastStepMs = millis();
+  Serial.printf("[imu] baseline=%.1f deg, initial volume=%.2f\n", angle0, volumeSetting);
+
+  for (;;) {
+    int16_t ax, ay, az;
+    if (imu::readAccel(ax, ay, az)) {
+      fax += alpha * (ax - fax);
+      fay += alpha * (ay - fay);
+      faz += alpha * (az - faz);
+
+      float delta = atan2f(fax, fay) * 180.0f / PI - angle0;
+      while (delta > 180.0f) delta -= 360.0f;   // wrap to -180..180
+      while (delta < -180.0f) delta += 360.0f;
+      if (cfg::ImuVolumeInvert) delta = -delta;
+
+      uint32_t now = millis();
+      if (fabsf(delta) > cfg::VolumeDeadzoneDeg) {
+        // Outside the off zone -> control ON: show the bar and step every 0.5 s.
+        volumeOverlayUntilMs = now + cfg::VolumeOverlayLingerMs;
+        if (now - lastStepMs >= cfg::VolumeStepIntervalMs) {
+          lastStepMs = now;
+          float prev = volumeSetting;
+          if (delta > 0.0f) {  // clockwise -> louder
+            volumeSetting = min(1.0f, volumeSetting + cfg::VolumeStep);
+          } else {  // counter-clockwise -> quieter
+            volumeSetting = max(0.0f, volumeSetting - cfg::VolumeStep);
+          }
+          if (volumeSetting != prev) {  // skip haptic/log when already at a limit
+            audioGainQ8 = volumeSettingToQ8(volumeSetting);
+            volumePercent = static_cast<int>(volumeSetting * 100.0f + 0.5f);
+            buzzerTick(delta > 0.0f ? cfg::BuzzerHapticFreqUpHz : cfg::BuzzerHapticFreqDownHz);
+            Serial.printf("[imu] vol %d%% (delta=%.0f)\n", volumePercent, delta);
+          }
+        }
+      } else {
+        // Inside the off zone: hold the timer so re-entry waits a full interval.
+        lastStepMs = now;
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(cfg::ImuPollIntervalMs));
+  }
 }
 
 bool startAudio(const char* clipName) {
@@ -350,6 +481,31 @@ void decodeTask(void*) {
   vTaskDelete(nullptr);
 }
 
+// Volume OSD overlaid on the bottom-center of the video area. The next video
+// frame fully redraws this region, so the bar self-erases once it stops being
+// drawn -- no manual clearing needed. Only the draw task touches gfx during
+// playback, so this is race-free with the frame push above it.
+void drawVolumeOverlay(int percent) {
+  if (percent < 0) percent = 0;
+  if (percent > 100) percent = 100;
+  const int barW = 180;
+  const int barH = 14;
+  const int x = (cfg::VideoFrameWidth - barW) / 2;
+  const int y = 208;
+  const int fillW = (barW - 4) * percent / 100;
+
+  gfx.setTextColor(WHITE, BLACK);
+  gfx.setTextSize(2);
+  gfx.setCursor(x, y - 26);
+  gfx.printf("VOL %3d%%", percent);
+
+  gfx.fillRect(x, y, barW, barH, DARKGREY);              // track
+  if (fillW > 0) {
+    gfx.fillRect(x + 2, y + 2, fillW, barH - 4, GREEN);  // filled level
+  }
+  gfx.drawRect(x, y, barW, barH, WHITE);                 // border
+}
+
 void drawTask(void*) {
   uint16_t* fb = nullptr;
   while (xQueueReceive(drawRgbQueue, &fb, portMAX_DELAY) == pdTRUE) {
@@ -360,6 +516,9 @@ void drawTask(void*) {
     uint32_t t0 = micros();
     gfx.draw16bitRGBBitmap(
         0, cfg::VideoTopMargin, fb, cfg::VideoFrameWidth, cfg::VideoFrameHeight);
+    if (millis() < volumeOverlayUntilMs) {
+      drawVolumeOverlay(volumePercent);
+    }
     stats.lastDrawUs = micros() - t0;
     stats.framesDrawn++;
     xQueueSend(freeRgbQueue, &fb, portMAX_DELAY);
@@ -492,7 +651,8 @@ void scanPlaylist(File dir, const String& prefix = "/") {
       int slash = name.lastIndexOf('/');
       String stem = slash >= 0 ? name.substring(slash + 1) : name;
       stem.remove(stem.length() - 6);
-      if (stem != "A" && stem != "B") {
+      // Reserved intro/transition stems never join the auto-scanned playlist.
+      if (stem != cfg::LoadingClipName && stem != cfg::TransitionClipName) {
         stem.toCharArray(playlist[playlistCount].name, cfg::FileNameLimit);
         playlistCount++;
       }
@@ -766,13 +926,20 @@ bool initSd() {
   return false;
 }
 
-void playBootClips() {
-  if (SD.exists("/A.mjpeg")) {
-    playClip("A");
+// Plays a reserved screen only if its .mjpeg is present. A missing file is the
+// documented "disable this screen" path, so it is skipped silently (info log,
+// never an error) and the caller continues normally.
+void playSpecialClip(const char* clipName) {
+  String path = "/" + String(clipName) + ".mjpeg";
+  if (SD.exists(path)) {
+    playClip(clipName);
+  } else {
+    Serial.printf("[special] %s absent, skipping\n", path.c_str());
   }
-  if (SD.exists("/B.mjpeg")) {
-    playClip("B");
-  }
+}
+
+void playLoadingScreen() {
+  playSpecialClip(cfg::LoadingClipName);
 }
 
 }  // namespace
@@ -794,6 +961,10 @@ void setup() {
 
   static libhelix::AACDecoderHelix decoder(audioDataCallback);
   aacDecoder = &decoder;
+
+  // Tilt-to-volume runs on the audio core at low priority; it mostly sleeps.
+  xTaskCreatePinnedToCore(
+      imuVolumeTask, "imuVol", 4096, nullptr, 1, nullptr, cfg::AudioCore);
 
   if (!initVideoPipeline()) {
     drawStatus("Video init failed");
@@ -817,7 +988,7 @@ void setup() {
   }
   logMemory("ready");
 
-  playBootClips();
+  playLoadingScreen();
 }
 
 void loop() {
@@ -827,7 +998,16 @@ void loop() {
     return;
   }
 
+  // A transition screen (if present) plays between consecutive videos. The static
+  // flag persists across loop() iterations, so the boundary on the loop wrap
+  // (last -> first) also gets a transition, but the very first video after the
+  // loading screen does not.
+  static bool firstVideo = true;
   for (size_t i = 0; i < playlistCount; ++i) {
+    if (!firstVideo) {
+      playSpecialClip(cfg::TransitionClipName);
+    }
+    firstVideo = false;
     playClip(playlist[i].name);
   }
 

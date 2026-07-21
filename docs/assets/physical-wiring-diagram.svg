@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1180" viewBox="0 0 1900 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Physical wiring diagram for Macintosh Mini</title>
+  <desc id="desc">Waveshare ESP32-S3-LCD-1.69 expansion connector wired to a MicroSD reader module and MAX98357A I2S amplifier. Labels and wire routes are separated for readability.</desc>
+  <defs>
+    <style>
+      text{font-family:Arial,Helvetica,sans-serif;fill:#111827}
+      .title{font-size:42px;font-weight:800}
+      .subtitle{font-size:21px;fill:#475569}
+      .label{font-size:24px;font-weight:800}
+      .small{font-size:17px;fill:#475569}
+      .pintext{font-size:18px;font-weight:700}
+      .tiny{font-size:14px;fill:#475569}
+      .board{fill:#d7dde6;stroke:#64748b;stroke-width:3;rx:34}
+      .chip{fill:#475569;stroke:#334155;stroke-width:2;rx:8}
+      .lcd{fill:#111827;stroke:#e5e7eb;stroke-width:4;rx:10}
+      .connector{fill:#f8fafc;stroke:#b45309;stroke-width:3;rx:8}
+      .module-blue{fill:#168fc3;stroke:#075985;stroke-width:3;rx:10}
+      .module-purple{fill:#5b2a86;stroke:#3b0764;stroke-width:3;rx:12}
+      .hole{fill:#f8fafc;stroke:#334155;stroke-width:4}
+      .pin{fill:#fff7ed;stroke:#7c2d12;stroke-width:2}
+      .speaker{fill:#111827;stroke:#020617;stroke-width:4}
+      .wire{fill:none;stroke-width:6;stroke-linecap:round;stroke-linejoin:round}
+      .wire-thin{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+      .spi{stroke:#16a34a}
+      .i2s{stroke:#2563eb}
+      .p33{stroke:#f97316}
+      .p5{stroke:#ef4444}
+      .gnd{stroke:#111827}
+      .unused{stroke:#cbd5e1}
+      .note{fill:#fff7ed;stroke:#fb923c;stroke-width:2;rx:12}
+      .legend{fill:#ffffff;stroke:#d1d5db;stroke-width:2;rx:10}
+      .tag{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;rx:7}
+      .tag-spi{fill:#ecfdf5;stroke:#86efac}
+      .tag-i2s{fill:#eff6ff;stroke:#93c5fd}
+      .tag-power{fill:#fff7ed;stroke:#fdba74}
+      .tag-5v{fill:#fef2f2;stroke:#fca5a5}
+      .tag-gnd{fill:#f8fafc;stroke:#94a3b8}
+      .white{fill:#ffffff}
+      .light{fill:#e0f2fe}
+      .purple-light{fill:#f5d0fe}
+    </style>
+  </defs>
+
+  <rect width="1900" height="1180" fill="#ffffff"/>
+  <text x="60" y="68" class="title">Macintosh Mini Physical Wiring</text>
+  <text x="62" y="104" class="subtitle">Waveshare ESP32-S3-LCD-1.69 + MicroSD reader + MAX98357A amplifier</text>
+
+  <rect x="60" y="132" width="650" height="104" class="note"/>
+  <text x="86" y="169" class="pintext">Power rule</text>
+  <text x="86" y="198" class="small">MicroSD VCC is connected to 3.3V. MAX98357A VIN is connected to 5V.</text>
+  <text x="86" y="222" class="small">All GND pins share one common ground rail.</text>
+
+  <rect x="1115" y="132" width="620" height="128" class="legend"/>
+  <text x="1142" y="168" class="pintext">Wire colors</text>
+  <line x1="1146" y1="198" x2="1204" y2="198" class="wire spi"/><text x="1223" y="205" class="small">SPI to MicroSD</text>
+  <line x1="1430" y1="198" x2="1488" y2="198" class="wire i2s"/><text x="1507" y="205" class="small">I2S to MAX98357A</text>
+  <line x1="1146" y1="230" x2="1204" y2="230" class="wire p33"/><text x="1223" y="237" class="small">3.3V</text>
+  <line x1="1320" y1="230" x2="1378" y2="230" class="wire p5"/><text x="1397" y="237" class="small">5V / VIN</text>
+  <line x1="1510" y1="230" x2="1568" y2="230" class="wire gnd"/><text x="1587" y="237" class="small">GND</text>
+
+  <!-- Mainboard -->
+  <rect x="90" y="310" width="560" height="560" class="board"/>
+  <rect x="142" y="365" width="202" height="382" class="lcd"/>
+  <text x="194" y="558" class="label white">LCD</text>
+  <text x="181" y="588" class="small" fill="#cbd5e1">240 x 280</text>
+  <rect x="394" y="432" width="78" height="158" class="chip"/>
+  <text x="407" y="517" class="tiny white">ESP32-S3</text>
+  <rect x="494" y="500" width="86" height="60" fill="#d1d5db" stroke="#94a3b8" stroke-width="3" rx="8"/>
+  <text x="489" y="592" class="tiny">USB-C</text>
+  <rect x="466" y="640" width="108" height="46" fill="#f1f5f9" stroke="#94a3b8" stroke-width="3" rx="7"/>
+  <text x="499" y="669" class="tiny">BAT</text>
+  <text x="146" y="818" class="label">Waveshare ESP32-S3-LCD-1.69</text>
+  <text x="172" y="848" class="small">Expansion connector pins are shown in the same visible order as the board asset.</text>
+
+  <rect x="650" y="324" width="92" height="504" class="connector"/>
+  <text x="646" y="304" class="pintext">Connector</text>
+
+  <!-- Connector pins in asset order. Text is kept on the left, wires exit to the right. -->
+  <circle cx="696" cy="350" r="9" class="pin"/><text x="548" y="357" text-anchor="end" class="pintext">GPIO18</text>
+  <circle cx="696" cy="386" r="9" class="pin"/><text x="548" y="393" text-anchor="end" class="pintext">GPIO17</text>
+  <circle cx="696" cy="422" r="9" class="pin"/><text x="548" y="429" text-anchor="end" class="pintext">GPIO16</text>
+  <circle cx="696" cy="458" r="9" class="pin"/><text x="548" y="465" text-anchor="end" class="pintext">GPIO3</text>
+  <circle cx="696" cy="494" r="9" class="pin"/><text x="548" y="501" text-anchor="end" class="pintext">GPIO2</text>
+  <circle cx="696" cy="530" r="9" class="pin"/><text x="548" y="537" text-anchor="end" class="pintext">SDA / GPIO11</text>
+  <circle cx="696" cy="566" r="9" class="pin"/><text x="548" y="573" text-anchor="end" class="pintext">SCL / GPIO10</text>
+  <circle cx="696" cy="602" r="9" class="pin"/><text x="548" y="609" text-anchor="end" class="pintext">U0TXD / GPIO43</text>
+  <circle cx="696" cy="638" r="9" class="pin"/><text x="548" y="645" text-anchor="end" class="pintext">U0RXD / GPIO44</text>
+  <circle cx="696" cy="674" r="9" class="pin"/><text x="548" y="681" text-anchor="end" class="pintext">3.3V</text>
+  <circle cx="696" cy="710" r="9" class="pin"/><text x="548" y="717" text-anchor="end" class="pintext">GND</text>
+  <circle cx="696" cy="746" r="9" class="pin"/><text x="548" y="753" text-anchor="end" class="pintext">5V</text>
+
+  <!-- MicroSD reader module matching the supplied asset shape -->
+  <g transform="translate(1160,305)">
+    <rect x="0" y="0" width="420" height="310" class="module-blue"/>
+    <rect x="38" y="42" width="172" height="122" fill="#d1d5db" stroke="#64748b" stroke-width="3" rx="8"/>
+    <rect x="53" y="58" width="142" height="24" fill="#94a3b8"/>
+    <circle cx="62" cy="238" r="16" class="hole"/>
+    <circle cx="356" cy="54" r="16" class="hole"/>
+    <text x="82" y="278" class="label light">MicroSD Reader</text>
+    <circle cx="364" cy="94" r="8" class="pin"/><text x="274" y="100" class="pintext white">3.3V</text>
+    <circle cx="364" cy="128" r="8" class="pin"/><text x="304" y="134" class="pintext white">CS</text>
+    <circle cx="364" cy="162" r="8" class="pin"/><text x="274" y="168" class="pintext white">MOSI</text>
+    <circle cx="364" cy="196" r="8" class="pin"/><text x="298" y="202" class="pintext white">CLK</text>
+    <circle cx="364" cy="230" r="8" class="pin"/><text x="274" y="236" class="pintext white">MISO</text>
+    <circle cx="364" cy="264" r="8" class="pin"/><text x="292" y="270" class="pintext white">GND</text>
+  </g>
+
+  <!-- MAX98357A module matching the supplied asset shape -->
+  <g transform="translate(1160,700)">
+    <rect x="0" y="0" width="420" height="310" class="module-purple"/>
+    <circle cx="52" cy="52" r="18" class="hole"/>
+    <circle cx="52" cy="258" r="18" class="hole"/>
+    <rect x="58" y="108" width="86" height="90" fill="none" stroke="#e9d5ff" stroke-width="5"/>
+    <circle cx="101" cy="123" r="14" class="pin"/>
+    <circle cx="101" cy="182" r="14" class="pin"/>
+    <rect x="182" y="108" width="78" height="78" fill="#1f2937" stroke="#111827" stroke-width="3" rx="8"/>
+    <text x="196" y="154" class="tiny white">MAX</text>
+    <text x="88" y="278" class="label purple-light">MAX98357A</text>
+    <circle cx="364" cy="54" r="8" class="pin"/><text x="298" y="60" class="pintext white">VIN</text>
+    <circle cx="364" cy="88" r="8" class="pin"/><text x="292" y="94" class="pintext white">GND</text>
+    <circle cx="364" cy="122" r="8" class="pin"/><text x="310" y="128" class="pintext white">SD</text>
+    <circle cx="364" cy="156" r="8" class="pin"/><text x="286" y="162" class="pintext white">GAIN</text>
+    <circle cx="364" cy="190" r="8" class="pin"/><text x="300" y="196" class="pintext white">DIN</text>
+    <circle cx="364" cy="224" r="8" class="pin"/><text x="286" y="230" class="pintext white">BCLK</text>
+    <circle cx="254" cy="266" r="8" class="pin"/><text x="214" y="248" class="pintext white">LRC</text>
+    <text x="30" y="129" class="pintext white">+</text>
+    <text x="30" y="188" class="pintext white">-</text>
+  </g>
+
+  <circle cx="1735" cy="850" r="62" class="speaker"/>
+  <circle cx="1735" cy="850" r="36" fill="#374151" stroke="#111827" stroke-width="3"/>
+  <text x="1690" y="938" class="small">Speaker</text>
+
+  <!-- Outer wiring lanes keep labels and routes separated. -->
+  <!-- SPI to MicroSD -->
+  <path d="M696 350 H805 V280 H1660 V501 H1524" class="wire spi"/>
+  <path d="M696 386 H830 V292 H1645 V433 H1524" class="wire spi"/>
+  <path d="M696 422 H855 V268 H1630 V467 H1524" class="wire spi"/>
+  <path d="M696 458 H880 V302 H1615 V535 H1524" class="wire spi"/>
+
+  <!-- I2S to MAX98357A -->
+  <path d="M696 494 H845 V1095 H1660 V924 H1524" class="wire i2s"/>
+  <path d="M696 602 H820 V1110 H1645 V890 H1524" class="wire i2s"/>
+  <path d="M696 638 H795 V1125 H1630 V966 H1414" class="wire i2s"/>
+
+  <!-- Power and ground rails -->
+  <path d="M696 674 H760 V274 H1740 V399 H1524" class="wire p33"/>
+  <path d="M696 746 H780 V1060 H1740 V754 H1524" class="wire p5"/>
+  <path d="M696 710 H740 V1090 H1785 V569 H1524" class="wire gnd"/>
+  <path d="M1785 788 H1524" class="wire gnd"/>
+
+  <!-- Speaker wires -->
+  <path d="M1261 823 H1668" class="wire p5"/>
+  <path d="M1261 882 H1674" class="wire gnd"/>
+
+  <!-- Unused I2C pins -->
+  <line x1="696" y1="530" x2="920" y2="530" class="wire-thin unused"/>
+  <line x1="696" y1="566" x2="920" y2="566" class="wire-thin unused"/>
+  <rect x="930" y="512" width="158" height="68" class="tag"/>
+  <text x="949" y="540" class="tiny">I2C left free</text>
+  <text x="949" y="562" class="tiny">RTC / IMU bus</text>
+
+  <!-- Endpoint tags, placed away from wire lanes -->
+  <rect x="1188" y="632" width="356" height="42" class="tag tag-spi"/>
+  <text x="1206" y="659" class="tiny">MicroSD: CS=GPIO17, MOSI=GPIO16, CLK=GPIO18, MISO=GPIO3</text>
+  <rect x="1188" y="1030" width="356" height="42" class="tag tag-i2s"/>
+  <text x="1206" y="1057" class="tiny">MAX98357A: BCLK=GPIO2, DIN=GPIO43, LRC=GPIO44</text>
+  <rect x="60" y="920" width="760" height="164" class="legend"/>
+  <text x="86" y="956" class="pintext">Pin map used by firmware/include/config.h</text>
+  <text x="86" y="990" class="small">SD: CS GPIO17, MOSI GPIO16, SCK GPIO18, MISO GPIO3</text>
+  <text x="86" y="1018" class="small">Audio: BCLK GPIO2, DIN U0TXD/GPIO43, LRC U0RXD/GPIO44</text>
+  <text x="86" y="1046" class="small">Power: SD 3.3V, MAX VIN 5V, common GND</text>
+  <text x="86" y="1074" class="small">SDA/SCL are not used by this wiring and remain available for the onboard I2C devices.</text>
+
+  <text x="60" y="1140" class="small">If hardware buttons are added later, choose spare exposed GPIOs after checking the exact board revision.</text>
+</svg>
