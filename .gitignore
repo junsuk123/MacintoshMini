@@ -23,5 +23,6 @@ docs/assets/*.pdf
 # Vendored dependencies are resolved by platformio.ini
 vendor/
 
-# Legacy packaged converter artifacts
-파일변환기/
+# Legacy packaged converter artifacts (keep only the distributable zip, via LFS)
+파일변환기/*
+!파일변환기/Window용.zip
